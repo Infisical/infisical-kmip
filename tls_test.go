@@ -6,136 +6,148 @@ package kmip
 
 import (
 	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/x509"
-	"crypto/x509/pkix"
-	"math/big"
+	"encoding/pem"
 	"net"
-	"time"
+	"os"
 
 	"github.com/pkg/errors"
 )
 
 type CertificateSet struct {
-	CAKey  *ecdsa.PrivateKey
-	CACert *x509.Certificate
-
 	ServerKey  *ecdsa.PrivateKey
 	ServerCert *x509.Certificate
 
 	ClientKey  *ecdsa.PrivateKey
 	ClientCert *x509.Certificate
 
-	CAPool *x509.CertPool
+	ServerCAPool *x509.CertPool
+	ClientCAPool *x509.CertPool
 }
 
 func (set *CertificateSet) Generate(hostnames []string, ips []net.IP) error {
-	notBefore := time.Now()
-	notAfter := notBefore.Add(time.Hour)
+	var err error
 
-	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
-	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
+	// Read server private key from PEM file
+	serverPrivateKeyPemBytes, err := os.ReadFile("./certificates/server/server-private-key.txt")
 	if err != nil {
-		return errors.Wrapf(err, "failed to generate serial number")
+		return errors.Wrapf(err, "error reading server key PEM file")
 	}
 
-	set.CAKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	block, _ := pem.Decode(serverPrivateKeyPemBytes)
+	if block == nil || block.Type != "PRIVATE KEY" {
+		return errors.New("failed to decode PEM block containing server private key")
+	}
+
+	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 	if err != nil {
-		return errors.Wrapf(err, "failt to generate CA key")
+		return errors.Wrapf(err, "error parsing server private key")
 	}
 
-	rootTemplate := x509.Certificate{
-		SerialNumber: serialNumber,
-		Subject: pkix.Name{
-			Organization: []string{"Acme Co"},
-			CommonName:   "Root CA",
-		},
-		NotBefore:             notBefore,
-		NotAfter:              notAfter,
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
-		BasicConstraintsValid: true,
-		IsCA:                  true,
+	var ok bool
+	set.ServerKey, ok = key.(*ecdsa.PrivateKey)
+	if !ok {
+		return errors.New("server private key is not of type ECDSA")
 	}
 
-	derBytes, err := x509.CreateCertificate(rand.Reader, &rootTemplate, &rootTemplate, &set.CAKey.PublicKey, set.CAKey)
+	// Read server certificate from PEM file
+	serverCertPemBytes, err := os.ReadFile("./certificates/server/server-cert.pem")
 	if err != nil {
-		return errors.Wrapf(err, "error generating CA certificate")
+		return errors.Wrapf(err, "error reading server cert PEM file")
 	}
 
-	set.CACert, err = x509.ParseCertificate(derBytes)
-	if err != nil {
-		return errors.Wrapf(err, "error parsing CA cert")
+	block, _ = pem.Decode(serverCertPemBytes)
+	if block == nil {
+		return errors.New("failed to decode PEM block containing server certificate")
 	}
 
-	set.ServerKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return errors.Wrapf(err, "error generating server key")
-	}
-
-	serialNumber, err = rand.Int(rand.Reader, serialNumberLimit)
-	if err != nil {
-		return errors.Wrapf(err, "failed to generate serial number")
-	}
-
-	serverTemplate := x509.Certificate{
-		SerialNumber: serialNumber,
-		Subject: pkix.Name{
-			Organization: []string{"Acme Co"},
-			CommonName:   "test_cert_1",
-		},
-		NotBefore:             notBefore,
-		NotAfter:              notAfter,
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		BasicConstraintsValid: true,
-		IsCA:                  false,
-		IPAddresses:           ips,
-		DNSNames:              hostnames,
-	}
-
-	derBytes, err = x509.CreateCertificate(rand.Reader, &serverTemplate, &rootTemplate, &set.ServerKey.PublicKey, set.CAKey)
-	if err != nil {
-		return errors.Wrapf(err, "error generating server cert")
-	}
-
-	set.ServerCert, err = x509.ParseCertificate(derBytes)
+	set.ServerCert, err = x509.ParseCertificate(block.Bytes)
 	if err != nil {
 		return errors.Wrapf(err, "error parsing server cert")
 	}
 
-	set.ClientKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	// Read client private key from PEM file
+	clientPrivateKeyPemBytes, err := os.ReadFile("./certificates/client/client-private-key.txt")
 	if err != nil {
-		return errors.Wrapf(err, "error generating client key")
+		return errors.Wrapf(err, "error reading client key PEM file")
 	}
 
-	clientTemplate := x509.Certificate{
-		SerialNumber: new(big.Int).SetInt64(4),
-		Subject: pkix.Name{
-			Organization: []string{"Acme Co"},
-			CommonName:   "client_auth_test_cert",
-		},
-		NotBefore:             notBefore,
-		NotAfter:              notAfter,
-		KeyUsage:              x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-		BasicConstraintsValid: true,
-		IsCA:                  false,
+	block, _ = pem.Decode(clientPrivateKeyPemBytes)
+	if block == nil || block.Type != "PRIVATE KEY" {
+		return errors.New("failed to decode PEM block containing client private key")
 	}
 
-	derBytes, err = x509.CreateCertificate(rand.Reader, &clientTemplate, &rootTemplate, &set.ClientKey.PublicKey, set.CAKey)
+	key, err = x509.ParsePKCS8PrivateKey(block.Bytes)
 	if err != nil {
-		return errors.Wrapf(err, "error generating client cert")
+		return errors.Wrapf(err, "error parsing client private key")
 	}
 
-	set.ClientCert, err = x509.ParseCertificate(derBytes)
+	set.ClientKey, ok = key.(*ecdsa.PrivateKey)
+	if !ok {
+		return errors.New("client private key is not of type ECDSA")
+	}
+
+	// Read client certificate from PEM file
+	clientCertPemBytes, err := os.ReadFile("./certificates/client/client-cert.pem")
+	if err != nil {
+		return errors.Wrapf(err, "error reading client cert PEM file")
+	}
+
+	block, _ = pem.Decode(clientCertPemBytes)
+	if block == nil {
+		return errors.New("failed to decode PEM block containing client certificate")
+	}
+
+	set.ClientCert, err = x509.ParseCertificate(block.Bytes)
 	if err != nil {
 		return errors.Wrapf(err, "error parsing client cert")
 	}
 
-	set.CAPool = x509.NewCertPool()
-	set.CAPool.AddCert(set.CACert)
+	// Read server certificate chain from PEM file
+	serverChainPemBytes, err := os.ReadFile("./certificates/server/server-chain.pem")
+	if err != nil {
+		return errors.Wrapf(err, "error reading server certificate chain PEM file")
+	}
+
+	// Create a new CertPool for the server and add each certificate in the chain
+	set.ServerCAPool = x509.NewCertPool()
+	for {
+		block, rest := pem.Decode(serverChainPemBytes)
+		if block == nil {
+			break
+		}
+
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return errors.Wrapf(err, "error parsing certificate in server chain")
+		}
+
+		set.ServerCAPool.AddCert(cert)
+		serverChainPemBytes = rest
+	}
+
+	// Read client certificate chain from PEM file
+	clientChainPemBytes, err := os.ReadFile("./certificates/client/client-chain.pem")
+	if err != nil {
+		return errors.Wrapf(err, "error reading client certificate chain PEM file")
+	}
+
+	// Create a new CertPool for the client and add each certificate in the chain
+	set.ClientCAPool = x509.NewCertPool()
+	for {
+		block, rest := pem.Decode(clientChainPemBytes)
+		if block == nil {
+			break
+		}
+
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return errors.Wrapf(err, "error parsing certificate in client chain")
+		}
+
+		set.ClientCAPool.AddCert(cert)
+		clientChainPemBytes = rest
+	}
 
 	return nil
 }

@@ -6,16 +6,21 @@ package kmip
 
 import (
 	"context"
+	"crypto"
 	"crypto/tls"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
 	"net"
+	"net/http"
 	"runtime"
 	"sync"
 	"time"
 
+	"github.com/go-resty/resty/v2"
 	"github.com/pkg/errors"
 )
 
@@ -23,6 +28,9 @@ import (
 type Server struct {
 	// Listen address
 	Addr string
+
+	// Infisical Base API URL
+	InfisicalBaseAPIURL string
 
 	// TLS Configuration for the server
 	TLSConfig *tls.Config
@@ -45,13 +53,10 @@ type Server struct {
 	//
 	// This handler might additionally verify client TLS cert or perform
 	// any other kind of auth (say, by soure address)
-	SessionAuthHandler func(conn net.Conn) (sessionAuth interface{}, err error)
+	SessionAuthHandler func(conn net.Conn) (sessionAuth SessionAuth, err error)
 
-	// RequestAuthHandler is called for any request which has Authentication field set
-	//
-	// Value returned from RequestAuthHandler is stored as RequestContext.RequestAuth, which
-	// can be used to authorize each batch item in the request
-	RequestAuthHandler func(sesssion *SessionContext, auth *Authentication) (requestAuth interface{}, err error)
+	CertificatePrivateKey   crypto.PrivateKey
+	CertificateSerialNumber string
 
 	l        net.Listener
 	mu       sync.Mutex
@@ -63,19 +68,25 @@ type Server struct {
 // Handler processes specific KMIP operation
 type Handler func(req *RequestContext, item *RequestBatchItem) (resp interface{}, err error)
 
+type SessionAuth struct {
+	ClientJwt                     string
+	ClientCertificateSerialNumber string
+}
+
 // SessionContext is initialized for each connection
 type SessionContext struct {
 	// Unique session identificator
 	SessionID string
 
 	// Additional opaque data related to connection auth, as returned by Server.SessionAuthHandler
-	SessionAuth interface{}
+	SessionAuth SessionAuth
 }
 
 // RequestContext covers batch of requests
 type RequestContext struct {
 	SessionContext
 
+	IdPlaceholder string
 	// RequestAuth captures result of request authentication
 	RequestAuth interface{}
 }
@@ -91,6 +102,8 @@ func (s *Server) ListenAndServe(initializedCh chan struct{}) error {
 	}
 
 	l, err := tls.Listen("tcp", addr, s.TLSConfig)
+	fmt.Printf("Listening on %s\n", addr)
+
 	if err != nil {
 		close(initializedCh)
 		return err
@@ -205,6 +218,8 @@ func (s *Server) Handle(operation Enum, handler Handler) {
 func (s *Server) initHandlers() {
 	s.handlers = make(map[Enum]Handler)
 	s.handlers[OPERATION_DISCOVER_VERSIONS] = s.handleDiscoverVersions
+	s.handlers[OPERATION_CREATE] = s.handleCreate
+	s.handlers[OPERATION_GET] = s.handleGet
 }
 
 func (s *Server) getDoneChan() chan struct{} {
@@ -322,18 +337,6 @@ func (s *Server) handleBatch(session *SessionContext, req *Request) (resp *Respo
 		SessionContext: *session,
 	}
 
-	if req.Header.Authentication.CredentialType != 0 {
-		if s.RequestAuthHandler == nil {
-			err = errors.New("request has authentication set, but no auth handler configured")
-			return
-		}
-		requestCtx.RequestAuth, err = s.RequestAuthHandler(session, &req.Header.Authentication)
-		if err != nil {
-			err = errors.Wrap(err, "error running auth handler")
-			return
-		}
-	}
-
 	for i := range req.BatchItems {
 		resp.BatchItems[i].Operation = req.BatchItems[i].Operation
 		resp.BatchItems[i].UniqueID = append([]byte(nil), req.BatchItems[i].UniqueID...)
@@ -414,6 +417,143 @@ func (s *Server) handleDiscoverVersions(req *RequestContext, item *RequestBatchI
 
 	resp = response
 	return
+}
+
+/* We currently only support getting symmetric keys */
+// TODO: add support for key wrapping
+func (s *Server) handleGet(req *RequestContext, item *RequestBatchItem) (resp interface{}, err error) {
+	response := GetResponse{}
+
+	request, ok := item.RequestPayload.(GetRequest)
+	if !ok {
+		return nil, wrapError(errors.New("wrong request body"), RESULT_REASON_INVALID_MESSAGE)
+	}
+
+	uniqueId := req.IdPlaceholder
+	if request.UniqueIdentifier != "" {
+		uniqueId = request.UniqueIdentifier
+	}
+
+	if request.KeyCompressionType != 0 {
+		return nil, wrapError(errors.New("key compression is not supported"), RESULT_REASON_INVALID_FIELD)
+	}
+
+	payload := KmipGetAPIRequest{
+		Id: uniqueId,
+	}
+
+	client := resty.New()
+
+	// Send the request using resty
+	apiResp, err := client.R().
+		SetHeader("X-Kmip-Jwt", req.SessionAuth.ClientJwt).
+		SetHeader("X-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+		SetHeader("Content-Type", "application/json").
+		SetBody(payload).
+		Post(fmt.Sprintf("%s/api/v1/kmip-operations/get", s.InfisicalBaseAPIURL))
+
+	if err != nil {
+		fmt.Printf("Error: %+v\n", err)
+		return nil, errors.Wrap(err, "failed to make POST request")
+	}
+
+	if apiResp.StatusCode() != http.StatusOK {
+		return nil, errors.Errorf("unexpected status code: %d", apiResp.StatusCode())
+	}
+
+	var result KmipGetAPIResponse
+	if err := json.Unmarshal(apiResp.Body(), &result); err != nil {
+		return nil, errors.Wrap(err, "failed to decode response")
+	}
+
+	response.ObjectType = OBJECT_TYPE_SYMMETRIC_KEY
+	response.UniqueIdentifier = result.Id
+
+	decodedValue, err := base64.StdEncoding.DecodeString(result.Value)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to decode base64 value")
+	}
+	response.SymmetricKey.KeyBlock.Value.KeyMaterial = []byte(decodedValue)
+	response.SymmetricKey.KeyBlock.FormatType = KEY_FORMAT_RAW
+
+	if result.Algorithm == "aes-256-gcm" {
+		response.SymmetricKey.KeyBlock.CryptographicAlgorithm = CRYPTO_AES
+		response.SymmetricKey.KeyBlock.CryptographicLength = 256
+	} else if result.Algorithm == "aes-128-gcm" {
+		response.SymmetricKey.KeyBlock.CryptographicAlgorithm = CRYPTO_AES
+		response.SymmetricKey.KeyBlock.CryptographicLength = 128
+	} else {
+		return nil, errors.New("unsupported algorithm")
+	}
+
+	return response, nil
+}
+
+/* We currently only support creating symmetric keys */
+func (s *Server) handleCreate(req *RequestContext, item *RequestBatchItem) (resp interface{}, err error) {
+	response := CreateResponse{}
+
+	request, ok := item.RequestPayload.(CreateRequest)
+	if !ok {
+		return nil, wrapError(errors.New("wrong request body"), RESULT_REASON_INVALID_MESSAGE)
+	}
+
+	if request.ObjectType != OBJECT_TYPE_SYMMETRIC_KEY {
+		return nil, wrapError(errors.New(fmt.Sprintf("cannot create object type %v with the Create operation", request.ObjectType)),
+			RESULT_REASON_INVALID_FIELD)
+	}
+
+	cryptoAlgorithm := request.TemplateAttribute.Attributes.Get(ATTRIBUTE_NAME_CRYPTOGRAPHIC_ALGORITHM)
+	if cryptoAlgorithm == nil {
+		return nil, wrapError(errors.New("cryptographic algorithm is required"), RESULT_REASON_INVALID_FIELD)
+	}
+
+	if cryptoAlgorithm != CRYPTO_AES {
+		return nil, wrapError(errors.New("only AES is supported"), RESULT_REASON_INVALID_FIELD)
+	}
+
+	encryptionAlgorithm := "aes-256-gcm"
+	length := request.TemplateAttribute.Attributes.Get(ATTRIBUTE_NAME_CRYPTOGRAPHIC_LENGTH)
+	if length != nil {
+		if lengthValue, ok := length.(int32); ok {
+			encryptionAlgorithm = fmt.Sprintf("aes-%d-gcm", lengthValue)
+		} else {
+			return nil, wrapError(errors.New("invalid cryptographic length type"), RESULT_REASON_INVALID_FIELD)
+		}
+	}
+
+	payload := KmipCreateAPIRequest{
+		EncryptionAlgorithm: encryptionAlgorithm,
+	}
+
+	client := resty.New()
+
+	apiResp, err := client.R().
+		SetHeader("X-Kmip-Jwt", req.SessionAuth.ClientJwt).
+		SetHeader("X-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+		SetHeader("Content-Type", "application/json").
+		SetBody(payload).
+		Post(fmt.Sprintf("%s/api/v1/kmip-operations/create", s.InfisicalBaseAPIURL))
+
+	if err != nil {
+		fmt.Printf("Error: %+v\n", err)
+		return nil, errors.Wrap(err, "failed to make POST request")
+	}
+
+	if apiResp.StatusCode() != http.StatusOK {
+		return nil, errors.Errorf("unexpected status code: %d", apiResp.StatusCode())
+	}
+
+	var result KmipCreateAPIResponse
+	if err := json.Unmarshal(apiResp.Body(), &result); err != nil {
+		return nil, errors.Wrap(err, "failed to decode response")
+	}
+
+	response.ObjectType = OBJECT_TYPE_SYMMETRIC_KEY
+	response.UniqueIdentifier = result.Id
+	req.IdPlaceholder = result.Id
+
+	return response, nil
 }
 
 // DefaultSupportedVersions is a default list of supported KMIP versions

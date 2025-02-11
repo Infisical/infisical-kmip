@@ -34,7 +34,7 @@ func (s *ServerSuite) SetupSuite() {
 	s.server.Addr = "localhost:"
 	s.server.TLSConfig = &tls.Config{} //nolint:gosec
 	DefaultServerTLSConfig(s.server.TLSConfig)
-	s.server.TLSConfig.ClientCAs = s.certs.CAPool
+	s.server.TLSConfig.ClientCAs = s.certs.ServerCAPool
 	s.server.TLSConfig.Certificates = []tls.Certificate{
 		{
 			Certificate: [][]byte{s.certs.ServerCert.Raw},
@@ -68,7 +68,7 @@ func (s *ServerSuite) SetupTest() {
 	s.client.Endpoint = "localhost:" + port
 	s.client.TLSConfig = &tls.Config{} //nolint:gosec
 	DefaultClientTLSConfig(s.client.TLSConfig)
-	s.client.TLSConfig.RootCAs = s.certs.CAPool
+	s.client.TLSConfig.RootCAs = s.certs.ClientCAPool
 	s.client.TLSConfig.Certificates = []tls.Certificate{
 		{
 			Certificate: [][]byte{s.certs.ClientCert.Raw},

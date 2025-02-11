@@ -220,6 +220,7 @@ func (s *Server) initHandlers() {
 	s.handlers[OPERATION_DISCOVER_VERSIONS] = s.handleDiscoverVersions
 	s.handlers[OPERATION_CREATE] = s.handleCreate
 	s.handlers[OPERATION_GET] = s.handleGet
+	s.handlers[OPERATION_DESTROY] = s.handleDestroy
 }
 
 func (s *Server) getDoneChan() chan struct{} {
@@ -489,6 +490,51 @@ func (s *Server) handleGet(req *RequestContext, item *RequestBatchItem) (resp in
 	return response, nil
 }
 
+func (s *Server) handleDestroy(req *RequestContext, item *RequestBatchItem) (resp interface{}, err error) {
+	response := DestroyResponse{}
+
+	request, ok := item.RequestPayload.(DestroyRequest)
+	if !ok {
+		return nil, wrapError(errors.New("wrong request body"), RESULT_REASON_INVALID_MESSAGE)
+	}
+
+	uniqueId := req.IdPlaceholder
+	if request.UniqueIdentifier != "" {
+		uniqueId = request.UniqueIdentifier
+	}
+
+	payload := KmipDestroyAPIRequest{
+		Id: uniqueId,
+	}
+
+	client := resty.New()
+
+	// Send the request using resty
+	apiResp, err := client.R().
+		SetHeader("X-Kmip-Jwt", req.SessionAuth.ClientJwt).
+		SetHeader("X-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+		SetHeader("Content-Type", "application/json").
+		SetBody(payload).
+		Post(fmt.Sprintf("%s/api/v1/kmip-operations/delete", s.InfisicalBaseAPIURL))
+
+	if err != nil {
+		fmt.Printf("Error: %+v\n", err)
+		return nil, errors.Wrap(err, "failed to make POST request")
+	}
+
+	if apiResp.StatusCode() != http.StatusOK {
+		return nil, errors.Errorf("unexpected status code: %d", apiResp.StatusCode())
+	}
+
+	var result KmipDestroyAPIResponse
+	if err := json.Unmarshal(apiResp.Body(), &result); err != nil {
+		return nil, errors.Wrap(err, "failed to decode response")
+	}
+
+	response.UniqueIdentifier = result.Id
+	return response, nil
+}
+
 /* We currently only support creating symmetric keys */
 func (s *Server) handleCreate(req *RequestContext, item *RequestBatchItem) (resp interface{}, err error) {
 	response := CreateResponse{}
@@ -512,18 +558,18 @@ func (s *Server) handleCreate(req *RequestContext, item *RequestBatchItem) (resp
 		return nil, wrapError(errors.New("only AES is supported"), RESULT_REASON_INVALID_FIELD)
 	}
 
-	encryptionAlgorithm := "aes-256-gcm"
+	algorithm := "aes-256-gcm"
 	length := request.TemplateAttribute.Attributes.Get(ATTRIBUTE_NAME_CRYPTOGRAPHIC_LENGTH)
 	if length != nil {
 		if lengthValue, ok := length.(int32); ok {
-			encryptionAlgorithm = fmt.Sprintf("aes-%d-gcm", lengthValue)
+			algorithm = fmt.Sprintf("aes-%d-gcm", lengthValue)
 		} else {
 			return nil, wrapError(errors.New("invalid cryptographic length type"), RESULT_REASON_INVALID_FIELD)
 		}
 	}
 
 	payload := KmipCreateAPIRequest{
-		EncryptionAlgorithm: encryptionAlgorithm,
+		Algorithm: algorithm,
 	}
 
 	client := resty.New()

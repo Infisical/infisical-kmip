@@ -15,5 +15,13 @@ type KmipCreateAPIResponse struct {
 }
 
 type KmipCreateAPIRequest struct {
-	EncryptionAlgorithm string `json:"encryptionAlgorithm"`
+	Algorithm string `json:"algorithm"`
+}
+
+type KmipDestroyAPIRequest struct {
+	Id string `json:"id"`
+}
+
+type KmipDestroyAPIResponse struct {
+	Id string `json:"id"`
 }

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/go-resty/resty/v2"
+	"github.com/gosimple/slug"
 	"github.com/pkg/errors"
 )
 
@@ -206,7 +207,6 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // Handle register handler for operation
 //
 // Server provides default handler for DISCOVER_VERSIONS operation, any other
-// operation should be specifically enabled via Handle
 func (s *Server) Handle(operation Enum, handler Handler) {
 	if s.handlers == nil {
 		s.initHandlers()
@@ -221,6 +221,12 @@ func (s *Server) initHandlers() {
 	s.handlers[OPERATION_CREATE] = s.handleCreate
 	s.handlers[OPERATION_GET] = s.handleGet
 	s.handlers[OPERATION_DESTROY] = s.handleDestroy
+	s.handlers[OPERATION_GET_ATTRIBUTES] = s.handleGetAttributes
+	s.handlers[OPERATION_ACTIVATE] = s.handleActivate
+	s.handlers[OPERATION_REVOKE] = s.handleRevoke
+	s.handlers[OPERATION_QUERY] = s.handleQuery
+	s.handlers[OPERATION_LOCATE] = s.handleLocate
+	s.handlers[OPERATION_REGISTER] = s.handleRegister
 }
 
 func (s *Server) getDoneChan() chan struct{} {
@@ -326,12 +332,15 @@ func (s *Server) handleBatch(session *SessionContext, req *Request) (resp *Respo
 
 	resp = &Response{
 		Header: ResponseHeader{
-			Version:                req.Header.Version,
-			TimeStamp:              time.Now(),
-			ClientCorrelationValue: req.Header.ClientCorrelationValue,
-			BatchCount:             req.Header.BatchCount,
+			Version:    req.Header.Version,
+			TimeStamp:  time.Now(),
+			BatchCount: req.Header.BatchCount,
 		},
 		BatchItems: make([]ResponseBatchItem, req.Header.BatchCount),
+	}
+
+	if req.Header.Version.Major == 1 && req.Header.Version.Minor == 4 {
+		resp.Header.ClientCorrelationValue = req.Header.ClientCorrelationValue
 	}
 
 	requestCtx := &RequestContext{
@@ -352,7 +361,6 @@ func (s *Server) handleBatch(session *SessionContext, req *Request) (resp *Respo
 			s.Log.Printf("[WARN] [%s] Request failed, operation %v: %s", requestCtx.SessionID, operationMap[req.BatchItems[i].Operation], batchErr)
 
 			resp.BatchItems[i].ResultStatus = RESULT_STATUS_OPERATION_FAILED
-			// TODO: should we skip returning error message? or return it only for specific errors?
 			resp.BatchItems[i].ResultMessage = batchErr.Error()
 			if protoErr, ok := batchErr.(Error); ok {
 				resp.BatchItems[i].ResultReason = protoErr.ResultReason()
@@ -420,6 +428,336 @@ func (s *Server) handleDiscoverVersions(req *RequestContext, item *RequestBatchI
 	return
 }
 
+// TODO: add handling of dates and other attributes
+func (s *Server) handleLocate(req *RequestContext, item *RequestBatchItem) (resp interface{}, err error) {
+	response := LocateResponse{}
+
+	request, ok := item.RequestPayload.(LocateRequest)
+	if !ok {
+		return nil, wrapError(errors.New("wrong request body"), RESULT_REASON_INVALID_MESSAGE)
+	}
+
+	client := resty.New()
+
+	apiResp, err := client.R().
+		SetHeader("X-Kmip-Jwt", req.SessionAuth.ClientJwt).
+		SetHeader("X-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+		Post(fmt.Sprintf("%s/api/v1/kmip-operations/locate", s.InfisicalBaseAPIURL))
+
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to make POST request")
+	}
+
+	if apiResp.StatusCode() != http.StatusOK {
+		return nil, errors.Errorf("unexpected status code: %d", apiResp.StatusCode())
+	}
+
+	var result KmipLocateAPIResponse
+	if err := json.Unmarshal(apiResp.Body(), &result); err != nil {
+		return nil, errors.Wrap(err, "failed to decode response")
+	}
+
+	supportedAttributes := []string{
+		ATTRIBUTE_NAME_UNIQUE_IDENTIFIER,
+		ATTRIBUTE_NAME_CRYPTOGRAPHIC_ALGORITHM,
+		ATTRIBUTE_NAME_CRYPTOGRAPHIC_LENGTH,
+		ATTRIBUTE_NAME_STATE,
+		ATTRIBUTE_NAME_NAME,
+		ATTRIBUTE_NAME_OBJECT_TYPE,
+		ATTRIBUTE_NAME_CRYPTOGRAPHIC_USAGE_MASK,
+	}
+
+	unsupportedAttributes := []string{}
+
+	var matchingIds []string
+
+	for _, object := range result.Objects {
+		var algorithm Enum
+		var cryptographicLength int32
+
+		if object.Algorithm == "aes-256-gcm" {
+			algorithm = CRYPTO_AES
+			cryptographicLength = 256
+		} else if object.Algorithm == "aes-128-gcm" {
+			algorithm = CRYPTO_AES
+			cryptographicLength = 128
+		}
+
+		var state Enum
+		if object.IsActive {
+			state = STATE_ACTIVE
+		} else {
+			state = STATE_DEACTIVATED
+		}
+
+		shouldMatch := true
+		for _, attribute := range request.Attributes {
+			if !ContainsString(supportedAttributes, attribute.Name) {
+				if !ContainsString(unsupportedAttributes, attribute.Name) {
+					unsupportedAttributes = append(unsupportedAttributes, attribute.Name)
+				}
+				shouldMatch = false
+				break
+			}
+
+			if attribute.Name == ATTRIBUTE_NAME_OBJECT_TYPE {
+				if attribute.Value != OBJECT_TYPE_SYMMETRIC_KEY {
+					shouldMatch = false
+					break
+				}
+			}
+
+			if attribute.Name == ATTRIBUTE_NAME_UNIQUE_IDENTIFIER {
+				if attribute.Value != object.Id {
+					shouldMatch = false
+					break
+				}
+			}
+
+			if attribute.Name == ATTRIBUTE_NAME_CRYPTOGRAPHIC_ALGORITHM {
+				if attribute.Value != algorithm {
+					shouldMatch = false
+					break
+				}
+			}
+
+			if attribute.Name == ATTRIBUTE_NAME_CRYPTOGRAPHIC_LENGTH {
+				if attribute.Value != cryptographicLength {
+					shouldMatch = false
+					break
+				}
+			}
+
+			if attribute.Name == ATTRIBUTE_NAME_STATE {
+				if attribute.Value != state {
+					shouldMatch = false
+					break
+				}
+			}
+
+			if attribute.Name == ATTRIBUTE_NAME_NAME {
+				if nameValue, ok := attribute.Value.(Name); ok {
+					slug.CustomSub = map[string]string{"_": "-"}
+					slugifiedName := slug.Make(nameValue.Value)
+					if slugifiedName != object.Name {
+						shouldMatch = false
+						break
+					}
+				} else {
+					return nil, wrapError(errors.New("name attribute is not of type Name"), RESULT_REASON_INVALID_FIELD)
+				}
+			}
+
+			if attribute.Name == ATTRIBUTE_NAME_CRYPTOGRAPHIC_USAGE_MASK {
+				// intentionally left blank as we do not have cryptographic usage mask yet!
+				continue
+			}
+		}
+
+		if shouldMatch {
+			matchingIds = append(matchingIds, object.Id)
+		}
+	}
+
+	if len(unsupportedAttributes) > 0 {
+		s.Log.Printf("Unsupported Attributes: %+v\n", unsupportedAttributes)
+	}
+
+	offset := 0
+	maximum := len(matchingIds)
+
+	if request.MaximumItems > 0 {
+		maximum = int(request.MaximumItems)
+		if maximum > len(matchingIds) {
+			maximum = len(matchingIds)
+		}
+	}
+
+	if request.OffsetItems > 0 {
+		offset = int(request.OffsetItems)
+		if offset > len(matchingIds) {
+			offset = len(matchingIds)
+		}
+	}
+
+	end := offset + maximum
+	if end > len(matchingIds) {
+		end = len(matchingIds)
+	}
+
+	if len(matchingIds) == 1 {
+		req.IdPlaceholder = matchingIds[0]
+	}
+
+	response.LocatedItems = int32(len(matchingIds))
+	response.UniqueIdentifiers = append(response.UniqueIdentifiers, matchingIds[offset:end]...)
+
+	return response, nil
+}
+
+func (s *Server) handleRegister(req *RequestContext, item *RequestBatchItem) (resp interface{}, err error) {
+	response := RegisterResponse{}
+
+	request, ok := item.RequestPayload.(RegisterRequest)
+	if !ok {
+		return nil, wrapError(errors.New("wrong request body"), RESULT_REASON_INVALID_MESSAGE)
+	}
+
+	if request.SymmetricKey.KeyBlock.FormatType != KEY_FORMAT_RAW {
+		return nil, wrapError(errors.New("unsupported key format"), RESULT_REASON_INVALID_FIELD)
+	}
+
+	if request.SymmetricKey.KeyBlock.CryptographicAlgorithm != CRYPTO_AES {
+		return nil, wrapError(errors.New("unsupported algorithm"), RESULT_REASON_INVALID_FIELD)
+	}
+
+	if request.SymmetricKey.KeyBlock.CryptographicLength != 128 && request.SymmetricKey.KeyBlock.CryptographicLength != 256 {
+		return nil, wrapError(errors.New("unsupported cryptographic length"), RESULT_REASON_INVALID_FIELD)
+	}
+
+	if request.SymmetricKey.KeyBlock.WrappingData.WrappingMethod != 0 {
+		return nil, wrapError(errors.New("unsupported wrapping method"), RESULT_REASON_INVALID_FIELD)
+	}
+
+	var algorithm string
+	if request.SymmetricKey.KeyBlock.CryptographicLength == 128 {
+		algorithm = "aes-128-gcm"
+	} else {
+		algorithm = "aes-256-gcm"
+	}
+
+	payload := KmipRegisterAPIRequest{
+		Key:       base64.StdEncoding.EncodeToString(request.SymmetricKey.KeyBlock.Value.KeyMaterial),
+		Algorithm: algorithm,
+	}
+
+	for _, attribute := range request.TemplateAttribute.Attributes {
+		if attribute.Name == ATTRIBUTE_NAME_NAME {
+			if nameValue, ok := attribute.Value.(Name); ok {
+				payload.Name = nameValue.Value
+			} else {
+				return nil, wrapError(errors.New("name attribute is not of type Name"), RESULT_REASON_INVALID_FIELD)
+			}
+		}
+	}
+
+	client := resty.New()
+
+	apiResp, err := client.R().
+		SetHeader("X-Kmip-Jwt", req.SessionAuth.ClientJwt).
+		SetHeader("X-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+		SetBody(payload).
+		Post(fmt.Sprintf("%s/api/v1/kmip-operations/register", s.InfisicalBaseAPIURL))
+
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to make POST request")
+	}
+
+	if apiResp.StatusCode() != http.StatusOK {
+		return nil, errors.Errorf("unexpected status code: %d", apiResp.StatusCode())
+	}
+
+	var result KmipRegisterAPIResponse
+	if err := json.Unmarshal(apiResp.Body(), &result); err != nil {
+		return nil, errors.Wrap(err, "failed to decode response")
+	}
+
+	req.IdPlaceholder = result.Id
+	response.UniqueIdentifier = result.Id
+
+	return response, nil
+}
+
+func (s *Server) handleActivate(req *RequestContext, item *RequestBatchItem) (resp interface{}, err error) {
+	response := ActivateResponse{}
+
+	request, ok := item.RequestPayload.(ActivateRequest)
+	if !ok {
+		return nil, wrapError(errors.New("wrong request body"), RESULT_REASON_INVALID_MESSAGE)
+	}
+
+	uniqueId := req.IdPlaceholder
+	if request.UniqueIdentifier != "" {
+		uniqueId = request.UniqueIdentifier
+	}
+
+	payload := KmipActivateAPIRequest{
+		Id: uniqueId,
+	}
+
+	client := resty.New()
+
+	apiResp, err := client.R().
+		SetHeader("X-Kmip-Jwt", req.SessionAuth.ClientJwt).
+		SetHeader("X-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+		SetBody(payload).
+		Post(fmt.Sprintf("%s/api/v1/kmip-operations/activate", s.InfisicalBaseAPIURL))
+
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to make POST request")
+	}
+
+	if apiResp.StatusCode() != http.StatusOK {
+		return nil, errors.Errorf("unexpected status code: %d", apiResp.StatusCode())
+	}
+
+	var result KmipActivateAPIResponse
+	if err := json.Unmarshal(apiResp.Body(), &result); err != nil {
+		return nil, errors.Wrap(err, "failed to decode response")
+	}
+
+	if !result.IsActive {
+		return nil, wrapError(errors.New("deactivated key cannot be enabled"), RESULT_REASON_ILLEGAL_OPERATION)
+	}
+
+	response.UniqueIdentifier = result.Id
+
+	return response, nil
+}
+
+func (s *Server) handleRevoke(req *RequestContext, item *RequestBatchItem) (resp interface{}, err error) {
+	response := RevokeResponse{}
+
+	request, ok := item.RequestPayload.(RevokeRequest)
+	if !ok {
+		return nil, wrapError(errors.New("wrong request body"), RESULT_REASON_INVALID_MESSAGE)
+	}
+
+	uniqueId := req.IdPlaceholder
+	if request.UniqueIdentifier != "" {
+		uniqueId = request.UniqueIdentifier
+	}
+
+	payload := KmipRevokeAPIRequest{
+		Id: uniqueId,
+	}
+
+	client := resty.New()
+
+	apiResp, err := client.R().
+		SetHeader("X-Kmip-Jwt", req.SessionAuth.ClientJwt).
+		SetHeader("X-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+		SetBody(payload).
+		Post(fmt.Sprintf("%s/api/v1/kmip-operations/revoke", s.InfisicalBaseAPIURL))
+
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to make POST request")
+	}
+
+	if apiResp.StatusCode() != http.StatusOK {
+		return nil, errors.Errorf("unexpected status code: %d", apiResp.StatusCode())
+	}
+
+	var result KmipRevokeAPIResponse
+	if err := json.Unmarshal(apiResp.Body(), &result); err != nil {
+		return nil, errors.Wrap(err, "failed to decode response")
+	}
+
+	response.UniqueIdentifier = result.Id
+
+	return response, nil
+}
+
 /* We currently only support getting symmetric keys */
 // TODO: add support for key wrapping
 func (s *Server) handleGet(req *RequestContext, item *RequestBatchItem) (resp interface{}, err error) {
@@ -445,7 +783,6 @@ func (s *Server) handleGet(req *RequestContext, item *RequestBatchItem) (resp in
 
 	client := resty.New()
 
-	// Send the request using resty
 	apiResp, err := client.R().
 		SetHeader("X-Kmip-Jwt", req.SessionAuth.ClientJwt).
 		SetHeader("X-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
@@ -474,8 +811,69 @@ func (s *Server) handleGet(req *RequestContext, item *RequestBatchItem) (resp in
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to decode base64 value")
 	}
+
 	response.SymmetricKey.KeyBlock.Value.KeyMaterial = []byte(decodedValue)
 	response.SymmetricKey.KeyBlock.FormatType = KEY_FORMAT_RAW
+
+	if request.KeyWrappingSpec.WrappingMethod != 0 {
+		if request.KeyWrappingSpec.WrappingMethod != WRAPPING_METHOD_ENCRYPT {
+			return nil, wrapError(errors.New("selected key wrapping method is not supported"), RESULT_REASON_INVALID_FIELD)
+		}
+		if request.KeyWrappingSpec.EncryptionKeyInformation.CryptoParams.BlockCipherMode != BLOCK_MODE_NISTKeyWrap {
+			return nil, wrapError(errors.New("selected block cipher mode is not supported"), RESULT_REASON_INVALID_FIELD)
+		}
+		if request.KeyWrappingSpec.EncodingOption != ENCODING_OPTION_NO_ENCODING {
+			return nil, wrapError(errors.New("encoding option is not supported"), RESULT_REASON_INVALID_FIELD)
+		}
+
+		payload := KmipGetAPIRequest{
+			Id: request.KeyWrappingSpec.EncryptionKeyInformation.UniqueIdentifier,
+		}
+
+		client := resty.New()
+
+		keyWrapperApiResp, err := client.R().
+			SetHeader("X-Kmip-Jwt", req.SessionAuth.ClientJwt).
+			SetHeader("X-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+			SetHeader("Content-Type", "application/json").
+			SetBody(payload).
+			Post(fmt.Sprintf("%s/api/v1/kmip-operations/get", s.InfisicalBaseAPIURL))
+
+		if err != nil {
+			fmt.Printf("Error: %+v\n", err)
+			return nil, errors.Wrap(err, "failed to make POST request")
+		}
+
+		if keyWrapperApiResp.StatusCode() != http.StatusOK {
+			return nil, errors.Errorf("unexpected status code: %d", keyWrapperApiResp.StatusCode())
+		}
+
+		var keyWrapperResult KmipGetAPIResponse
+		if err := json.Unmarshal(keyWrapperApiResp.Body(), &keyWrapperResult); err != nil {
+			return nil, errors.Wrap(err, "failed to decode response")
+		}
+
+		decodedKeyWrapper, err := base64.StdEncoding.DecodeString(keyWrapperResult.Value)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to decode base64 value")
+		}
+
+		wrappedKey, err := AesWrap([]byte(decodedKeyWrapper), []byte(decodedValue))
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to wrap key")
+		}
+
+		response.SymmetricKey.KeyBlock.Value.KeyMaterial = wrappedKey
+		response.SymmetricKey.KeyBlock.WrappingData = KeyWrappingData{
+			WrappingMethod: WRAPPING_METHOD_ENCRYPT,
+			EncryptionKeyInformation: EncryptionKeyInformation{
+				UniqueIdentifier: request.KeyWrappingSpec.EncryptionKeyInformation.UniqueIdentifier,
+				CryptoParams: CryptoParams{
+					BlockCipherMode: BLOCK_MODE_NISTKeyWrap,
+				},
+			},
+		}
+	}
 
 	if result.Algorithm == "aes-256-gcm" {
 		response.SymmetricKey.KeyBlock.CryptographicAlgorithm = CRYPTO_AES
@@ -509,13 +907,12 @@ func (s *Server) handleDestroy(req *RequestContext, item *RequestBatchItem) (res
 
 	client := resty.New()
 
-	// Send the request using resty
 	apiResp, err := client.R().
 		SetHeader("X-Kmip-Jwt", req.SessionAuth.ClientJwt).
 		SetHeader("X-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
 		SetHeader("Content-Type", "application/json").
 		SetBody(payload).
-		Post(fmt.Sprintf("%s/api/v1/kmip-operations/delete", s.InfisicalBaseAPIURL))
+		Post(fmt.Sprintf("%s/api/v1/kmip-operations/destroy", s.InfisicalBaseAPIURL))
 
 	if err != nil {
 		fmt.Printf("Error: %+v\n", err)
@@ -532,6 +929,173 @@ func (s *Server) handleDestroy(req *RequestContext, item *RequestBatchItem) (res
 	}
 
 	response.UniqueIdentifier = result.Id
+	return response, nil
+}
+
+/*
+TODO: missing the following required attributes in KMIP 1.4:
+- digest
+- sensitive
+- always sensitive
+- extractable
+- never extractable
+*/
+func (s *Server) handleGetAttributes(req *RequestContext, item *RequestBatchItem) (resp interface{}, err error) {
+	response := GetAttributesResponse{}
+
+	request, ok := item.RequestPayload.(GetAttributesRequest)
+	if !ok {
+		return nil, wrapError(errors.New("wrong request body"), RESULT_REASON_INVALID_MESSAGE)
+	}
+
+	uniqueId := req.IdPlaceholder
+	if request.UniqueIdentifier != "" {
+		uniqueId = request.UniqueIdentifier
+	}
+
+	payload := KmipGetAttributeAPIRequest{
+		Id: uniqueId,
+	}
+
+	client := resty.New()
+
+	apiResp, err := client.R().
+		SetHeader("X-Kmip-Jwt", req.SessionAuth.ClientJwt).
+		SetHeader("X-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+		SetHeader("Content-Type", "application/json").
+		SetBody(payload).
+		Post(fmt.Sprintf("%s/api/v1/kmip-operations/get-attributes", s.InfisicalBaseAPIURL))
+
+	if err != nil {
+		fmt.Printf("Error: %+v\n", err)
+		return nil, errors.Wrap(err, "failed to make POST request")
+	}
+
+	if apiResp.StatusCode() != http.StatusOK {
+		return nil, errors.Errorf("unexpected status code: %d", apiResp.StatusCode())
+	}
+
+	var result KmipGetAttributeAPIResponse
+	if err := json.Unmarshal(apiResp.Body(), &result); err != nil {
+		return nil, errors.Wrap(err, "failed to decode response")
+	}
+
+	response.UniqueIdentifier = result.Id
+
+	var cryptographicLength int32
+	if result.Algorithm == "aes-256-gcm" {
+		cryptographicLength = 256
+	} else if result.Algorithm == "aes-128-gcm" {
+		cryptographicLength = 128
+	} else {
+		return nil, errors.New("unsupported algorithm")
+	}
+
+	var stateValue Enum
+	if result.IsActive {
+		stateValue = STATE_ACTIVE
+	} else {
+		stateValue = STATE_DEACTIVATED
+	}
+
+	response.UniqueIdentifier = result.Id
+	attributes := []Attribute{
+		{
+			Name:  ATTRIBUTE_NAME_UNIQUE_IDENTIFIER,
+			Value: result.Id,
+		},
+		{
+			Name:  ATTRIBUTE_NAME_CRYPTOGRAPHIC_ALGORITHM,
+			Value: CRYPTO_AES,
+		},
+		{
+			Name:  ATTRIBUTE_NAME_OBJECT_TYPE,
+			Value: OBJECT_TYPE_SYMMETRIC_KEY,
+		},
+		{
+			Name:  ATTRIBUTE_NAME_CRYPTOGRAPHIC_LENGTH,
+			Value: cryptographicLength,
+		},
+		{
+			Name:  ATTRIBUTE_NAME_CRYPTOGRAPHIC_USAGE_MASK,
+			Value: int32(CRYPTO_USAGE_MASK_ENCRYPT | CRYPTO_USAGE_MASK_DECRYPT | CRYPTO_USAGE_MASK_WRAP_KEY | CRYPTO_USAGE_MASK_UNWRAP_KEY | CRYPTO_USAGE_MASK_MAC_GENERATE | CRYPTO_USAGE_MASK_MAC_VERIFY),
+		},
+		{
+			Name:  ATTRIBUTE_NAME_STATE,
+			Value: stateValue,
+		},
+		{
+			Name:  ATTRIBUTE_NAME_INITIAL_DATE,
+			Value: result.CreatedAt,
+		},
+		{
+			Name:  ATTRIBUTE_NAME_ACTIVATION_DATE,
+			Value: result.CreatedAt,
+		},
+		{
+			Name:  ATTRIBUTE_NAME_LAST_CHANGE_DATE,
+			Value: result.UpdatedAt,
+		},
+	}
+
+	if len(request.AttributeNames) == 0 {
+		response.Attributes = attributes
+	} else {
+		for _, requestedAttribute := range request.AttributeNames {
+			for _, attribute := range attributes {
+				if requestedAttribute == attribute.Name {
+					response.Attributes = append(response.Attributes, attribute)
+				}
+			}
+		}
+	}
+
+	if len(response.Attributes) == 0 {
+		response.Attributes = []Attribute{
+			{
+				Name:  ATTRIBUTE_NAME_UNIQUE_IDENTIFIER,
+				Value: result.Id,
+			},
+		}
+	}
+
+	return response, nil
+}
+
+// Based on the 1.4 spec, this is missing RNG Parameters, Profile Information, and Attestation Types
+func (s *Server) handleQuery(req *RequestContext, item *RequestBatchItem) (resp interface{}, err error) {
+	response := QueryResponse{}
+
+	request, ok := item.RequestPayload.(QueryRequest)
+	if !ok {
+		return nil, wrapError(errors.New("wrong request body"), RESULT_REASON_INVALID_MESSAGE)
+	}
+
+	if !ContainsEnum(request.QueryFunctions, QUERY_OPERATIONS) {
+		response.Operations = []Enum{
+			OPERATION_CREATE,
+			OPERATION_REGISTER,
+			OPERATION_LOCATE,
+			OPERATION_GET,
+			OPERATION_GET_ATTRIBUTES,
+			OPERATION_ACTIVATE,
+			OPERATION_REVOKE,
+			OPERATION_DESTROY,
+			OPERATION_QUERY,
+			OPERATION_DISCOVER_VERSIONS,
+		}
+	}
+
+	if !ContainsEnum(request.QueryFunctions, QUERY_OBJECTS) {
+		response.ObjectTypes = []Enum{
+			OBJECT_TYPE_SYMMETRIC_KEY,
+		}
+	}
+
+	if !ContainsEnum(request.QueryFunctions, QUERY_SERVER_INFORMATION) {
+		response.VendorIdentification = "Infisical KMIP Server"
+	}
+
 	return response, nil
 }
 
@@ -608,4 +1172,5 @@ var DefaultSupportedVersions = []ProtocolVersion{
 	{Major: 1, Minor: 3},
 	{Major: 1, Minor: 2},
 	{Major: 1, Minor: 1},
+	{Major: 1, Minor: 0},
 }

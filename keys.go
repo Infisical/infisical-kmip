@@ -97,7 +97,7 @@ type KeyBlock struct {
 	Value                  KeyValue        `kmip:"KEY_VALUE,required"`
 	CryptographicAlgorithm Enum            `kmip:"CRYPTOGRAPHIC_ALGORITHM"`
 	CryptographicLength    int32           `kmip:"CRYPTOGRAPHIC_LENGTH"`
-	WrappingData           KeyWrappingData `kmip:"KEY_WRAPPING_SPECIFICATION"`
+	WrappingData           KeyWrappingData `kmip:"KEY_WRAPPING_DATA"`
 }
 
 // KeyValue is a Key Value Object Structure

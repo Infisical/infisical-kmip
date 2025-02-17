@@ -75,3 +75,16 @@ type KmipRegisterAPIRequest struct {
 type KmipRegisterAPIResponse struct {
 	Id string `json:"id"`
 }
+
+type KmipServerRegistrationAPIRequest struct {
+	HostnamesOrIps string `json:"hostnamesOrIps"`
+	CommonName     string `json:"commonName"`
+	TTL            string `json:"ttl"`
+}
+
+type KmipServerRegistrationAPIResponse struct {
+	Certificate            string `json:"certificate"`
+	CertificateChain       string `json:"certificateChain"`
+	PrivateKey             string `json:"privateKey"`
+	ClientCertificateChain string `json:"clientCertificateChain"`
+}

@@ -15,13 +15,14 @@ import (
 	"io/ioutil"
 	"log"
 	"net"
-	"net/http"
 	"runtime"
 	"sync"
 	"time"
 
 	"github.com/go-resty/resty/v2"
 	"github.com/gosimple/slug"
+	infisical "github.com/infisical/go-sdk"
+	infisicalErrors "github.com/infisical/go-sdk/packages/errors"
 	"github.com/pkg/errors"
 )
 
@@ -59,19 +60,26 @@ type Server struct {
 	CertificatePrivateKey   crypto.PrivateKey
 	CertificateSerialNumber string
 
+	InfisicalAuth infisical.AuthInterface
+
 	l        net.Listener
 	mu       sync.Mutex
 	wg       sync.WaitGroup
 	doneChan chan struct{}
 	handlers map[Enum]Handler
+
+	ServerName     string
+	CertificateTTL string
+	HostnamesOrIps string
 }
 
 // Handler processes specific KMIP operation
 type Handler func(req *RequestContext, item *RequestBatchItem) (resp interface{}, err error)
 
 type SessionAuth struct {
-	ClientJwt                     string
 	ClientCertificateSerialNumber string
+	ProjectId                     string
+	ClientId                      string
 }
 
 // SessionContext is initialized for each connection
@@ -103,7 +111,7 @@ func (s *Server) ListenAndServe(initializedCh chan struct{}) error {
 	}
 
 	l, err := tls.Listen("tcp", addr, s.TLSConfig)
-	fmt.Printf("Listening on %s\n", addr)
+	s.Log.Printf("Listening on %s\n", addr)
 
 	if err != nil {
 		close(initializedCh)
@@ -440,16 +448,20 @@ func (s *Server) handleLocate(req *RequestContext, item *RequestBatchItem) (resp
 	client := resty.New()
 
 	apiResp, err := client.R().
-		SetHeader("X-Kmip-Jwt", req.SessionAuth.ClientJwt).
-		SetHeader("X-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+		SetHeader("X-Kmip-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+		SetHeader("X-Kmip-Client-Certificate-Serial-Number", req.SessionAuth.ClientCertificateSerialNumber).
+		SetHeader("X-Kmip-Project-Id", req.SessionAuth.ProjectId).
+		SetHeader("X-Kmip-Client-Id", req.SessionAuth.ClientId).
+		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.InfisicalAuth.GetAccessToken())).
 		Post(fmt.Sprintf("%s/api/v1/kmip-operations/locate", s.InfisicalBaseAPIURL))
 
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to make POST request")
+		s.Log.Printf("Error: %+v\n", err)
+		return nil, infisicalErrors.NewRequestError("KmipLocateOperation", err)
 	}
 
-	if apiResp.StatusCode() != http.StatusOK {
-		return nil, errors.Errorf("unexpected status code: %d", apiResp.StatusCode())
+	if apiResp.IsError() {
+		return nil, infisicalErrors.NewAPIErrorWithResponse("KmipLocateOperation", apiResp)
 	}
 
 	var result KmipLocateAPIResponse
@@ -644,17 +656,21 @@ func (s *Server) handleRegister(req *RequestContext, item *RequestBatchItem) (re
 	client := resty.New()
 
 	apiResp, err := client.R().
-		SetHeader("X-Kmip-Jwt", req.SessionAuth.ClientJwt).
-		SetHeader("X-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+		SetHeader("X-Kmip-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+		SetHeader("X-Kmip-Client-Certificate-Serial-Number", req.SessionAuth.ClientCertificateSerialNumber).
+		SetHeader("X-Kmip-Project-Id", req.SessionAuth.ProjectId).
+		SetHeader("X-Kmip-Client-Id", req.SessionAuth.ClientId).
+		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.InfisicalAuth.GetAccessToken())).
 		SetBody(payload).
 		Post(fmt.Sprintf("%s/api/v1/kmip-operations/register", s.InfisicalBaseAPIURL))
 
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to make POST request")
+		s.Log.Printf("Error: %+v\n", err)
+		return nil, infisicalErrors.NewRequestError("KmipRegisterOperation", err)
 	}
 
-	if apiResp.StatusCode() != http.StatusOK {
-		return nil, errors.Errorf("unexpected status code: %d", apiResp.StatusCode())
+	if apiResp.IsError() {
+		return nil, infisicalErrors.NewAPIErrorWithResponse("KmipRegisterOperation", apiResp)
 	}
 
 	var result KmipRegisterAPIResponse
@@ -688,17 +704,21 @@ func (s *Server) handleActivate(req *RequestContext, item *RequestBatchItem) (re
 	client := resty.New()
 
 	apiResp, err := client.R().
-		SetHeader("X-Kmip-Jwt", req.SessionAuth.ClientJwt).
-		SetHeader("X-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+		SetHeader("X-Kmip-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+		SetHeader("X-Kmip-Client-Certificate-Serial-Number", req.SessionAuth.ClientCertificateSerialNumber).
+		SetHeader("X-Kmip-Project-Id", req.SessionAuth.ProjectId).
+		SetHeader("X-Kmip-Client-Id", req.SessionAuth.ClientId).
+		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.InfisicalAuth.GetAccessToken())).
 		SetBody(payload).
 		Post(fmt.Sprintf("%s/api/v1/kmip-operations/activate", s.InfisicalBaseAPIURL))
 
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to make POST request")
+		s.Log.Printf("Error: %+v\n", err)
+		return nil, infisicalErrors.NewRequestError("KmipActivateOperation", err)
 	}
 
-	if apiResp.StatusCode() != http.StatusOK {
-		return nil, errors.Errorf("unexpected status code: %d", apiResp.StatusCode())
+	if apiResp.IsError() {
+		return nil, infisicalErrors.NewAPIErrorWithResponse("KmipActivateOperation", apiResp)
 	}
 
 	var result KmipActivateAPIResponse
@@ -735,17 +755,21 @@ func (s *Server) handleRevoke(req *RequestContext, item *RequestBatchItem) (resp
 	client := resty.New()
 
 	apiResp, err := client.R().
-		SetHeader("X-Kmip-Jwt", req.SessionAuth.ClientJwt).
-		SetHeader("X-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+		SetHeader("X-Kmip-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+		SetHeader("X-Kmip-Client-Certificate-Serial-Number", req.SessionAuth.ClientCertificateSerialNumber).
+		SetHeader("X-Kmip-Project-Id", req.SessionAuth.ProjectId).
+		SetHeader("X-Kmip-Client-Id", req.SessionAuth.ClientId).
+		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.InfisicalAuth.GetAccessToken())).
 		SetBody(payload).
 		Post(fmt.Sprintf("%s/api/v1/kmip-operations/revoke", s.InfisicalBaseAPIURL))
 
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to make POST request")
+		s.Log.Printf("Error: %+v\n", err)
+		return nil, infisicalErrors.NewRequestError("KmipRevokeOperation", err)
 	}
 
-	if apiResp.StatusCode() != http.StatusOK {
-		return nil, errors.Errorf("unexpected status code: %d", apiResp.StatusCode())
+	if apiResp.IsError() {
+		return nil, infisicalErrors.NewAPIErrorWithResponse("KmipRevokeOperation", apiResp)
 	}
 
 	var result KmipRevokeAPIResponse
@@ -784,19 +808,22 @@ func (s *Server) handleGet(req *RequestContext, item *RequestBatchItem) (resp in
 	client := resty.New()
 
 	apiResp, err := client.R().
-		SetHeader("X-Kmip-Jwt", req.SessionAuth.ClientJwt).
-		SetHeader("X-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+		SetHeader("X-Kmip-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+		SetHeader("X-Kmip-Client-Certificate-Serial-Number", req.SessionAuth.ClientCertificateSerialNumber).
+		SetHeader("X-Kmip-Project-Id", req.SessionAuth.ProjectId).
+		SetHeader("X-Kmip-Client-Id", req.SessionAuth.ClientId).
+		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.InfisicalAuth.GetAccessToken())).
 		SetHeader("Content-Type", "application/json").
 		SetBody(payload).
 		Post(fmt.Sprintf("%s/api/v1/kmip-operations/get", s.InfisicalBaseAPIURL))
 
 	if err != nil {
-		fmt.Printf("Error: %+v\n", err)
-		return nil, errors.Wrap(err, "failed to make POST request")
+		s.Log.Printf("Error: %+v\n", err)
+		return nil, infisicalErrors.NewRequestError("KmipGetOperation", err)
 	}
 
-	if apiResp.StatusCode() != http.StatusOK {
-		return nil, errors.Errorf("unexpected status code: %d", apiResp.StatusCode())
+	if apiResp.IsError() {
+		return nil, infisicalErrors.NewAPIErrorWithResponse("KmipGetOperation", apiResp)
 	}
 
 	var result KmipGetAPIResponse
@@ -833,19 +860,22 @@ func (s *Server) handleGet(req *RequestContext, item *RequestBatchItem) (resp in
 		client := resty.New()
 
 		keyWrapperApiResp, err := client.R().
-			SetHeader("X-Kmip-Jwt", req.SessionAuth.ClientJwt).
-			SetHeader("X-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+			SetHeader("X-Kmip-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+			SetHeader("X-Kmip-Client-Certificate-Serial-Number", req.SessionAuth.ClientCertificateSerialNumber).
+			SetHeader("X-Kmip-Project-Id", req.SessionAuth.ProjectId).
+			SetHeader("X-Kmip-Client-Id", req.SessionAuth.ClientId).
+			SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.InfisicalAuth.GetAccessToken())).
 			SetHeader("Content-Type", "application/json").
 			SetBody(payload).
 			Post(fmt.Sprintf("%s/api/v1/kmip-operations/get", s.InfisicalBaseAPIURL))
 
 		if err != nil {
-			fmt.Printf("Error: %+v\n", err)
-			return nil, errors.Wrap(err, "failed to make POST request")
+			s.Log.Printf("Error: %+v\n", err)
+			return nil, infisicalErrors.NewRequestError("KmipGetOperation", err)
 		}
 
-		if keyWrapperApiResp.StatusCode() != http.StatusOK {
-			return nil, errors.Errorf("unexpected status code: %d", keyWrapperApiResp.StatusCode())
+		if apiResp.IsError() {
+			return nil, infisicalErrors.NewAPIErrorWithResponse("KmipGetOperation", apiResp)
 		}
 
 		var keyWrapperResult KmipGetAPIResponse
@@ -908,19 +938,22 @@ func (s *Server) handleDestroy(req *RequestContext, item *RequestBatchItem) (res
 	client := resty.New()
 
 	apiResp, err := client.R().
-		SetHeader("X-Kmip-Jwt", req.SessionAuth.ClientJwt).
-		SetHeader("X-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+		SetHeader("X-Kmip-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+		SetHeader("X-Kmip-Client-Certificate-Serial-Number", req.SessionAuth.ClientCertificateSerialNumber).
+		SetHeader("X-Kmip-Project-Id", req.SessionAuth.ProjectId).
+		SetHeader("X-Kmip-Client-Id", req.SessionAuth.ClientId).
+		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.InfisicalAuth.GetAccessToken())).
 		SetHeader("Content-Type", "application/json").
 		SetBody(payload).
 		Post(fmt.Sprintf("%s/api/v1/kmip-operations/destroy", s.InfisicalBaseAPIURL))
 
 	if err != nil {
-		fmt.Printf("Error: %+v\n", err)
-		return nil, errors.Wrap(err, "failed to make POST request")
+		s.Log.Printf("Error: %+v\n", err)
+		return nil, infisicalErrors.NewRequestError("KmipDestroyOperation", err)
 	}
 
-	if apiResp.StatusCode() != http.StatusOK {
-		return nil, errors.Errorf("unexpected status code: %d", apiResp.StatusCode())
+	if apiResp.IsError() {
+		return nil, infisicalErrors.NewAPIErrorWithResponse("KmipDestroyOperation", apiResp)
 	}
 
 	var result KmipDestroyAPIResponse
@@ -960,19 +993,22 @@ func (s *Server) handleGetAttributes(req *RequestContext, item *RequestBatchItem
 	client := resty.New()
 
 	apiResp, err := client.R().
-		SetHeader("X-Kmip-Jwt", req.SessionAuth.ClientJwt).
-		SetHeader("X-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+		SetHeader("X-Kmip-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+		SetHeader("X-Kmip-Client-Certificate-Serial-Number", req.SessionAuth.ClientCertificateSerialNumber).
+		SetHeader("X-Kmip-Project-Id", req.SessionAuth.ProjectId).
+		SetHeader("X-Kmip-Client-Id", req.SessionAuth.ClientId).
+		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.InfisicalAuth.GetAccessToken())).
 		SetHeader("Content-Type", "application/json").
 		SetBody(payload).
 		Post(fmt.Sprintf("%s/api/v1/kmip-operations/get-attributes", s.InfisicalBaseAPIURL))
 
 	if err != nil {
-		fmt.Printf("Error: %+v\n", err)
-		return nil, errors.Wrap(err, "failed to make POST request")
+		s.Log.Printf("Error: %+v\n", err)
+		return nil, infisicalErrors.NewRequestError("KmipGetAttributesOperation", err)
 	}
 
-	if apiResp.StatusCode() != http.StatusOK {
-		return nil, errors.Errorf("unexpected status code: %d", apiResp.StatusCode())
+	if apiResp.IsError() {
+		return nil, infisicalErrors.NewAPIErrorWithResponse("KmipGetAttributesOperation", apiResp)
 	}
 
 	var result KmipGetAttributeAPIResponse
@@ -1139,19 +1175,22 @@ func (s *Server) handleCreate(req *RequestContext, item *RequestBatchItem) (resp
 	client := resty.New()
 
 	apiResp, err := client.R().
-		SetHeader("X-Kmip-Jwt", req.SessionAuth.ClientJwt).
-		SetHeader("X-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+		SetHeader("X-Kmip-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+		SetHeader("X-Kmip-Client-Certificate-Serial-Number", req.SessionAuth.ClientCertificateSerialNumber).
+		SetHeader("X-Kmip-Project-Id", req.SessionAuth.ProjectId).
+		SetHeader("X-Kmip-Client-Id", req.SessionAuth.ClientId).
+		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.InfisicalAuth.GetAccessToken())).
 		SetHeader("Content-Type", "application/json").
 		SetBody(payload).
 		Post(fmt.Sprintf("%s/api/v1/kmip-operations/create", s.InfisicalBaseAPIURL))
 
 	if err != nil {
-		fmt.Printf("Error: %+v\n", err)
-		return nil, errors.Wrap(err, "failed to make POST request")
+		s.Log.Printf("Error: %+v\n", err)
+		return nil, infisicalErrors.NewRequestError("KmipCreateOperation", err)
 	}
 
-	if apiResp.StatusCode() != http.StatusOK {
-		return nil, errors.Errorf("unexpected status code: %d", apiResp.StatusCode())
+	if apiResp.IsError() {
+		return nil, infisicalErrors.NewAPIErrorWithResponse("KmipCreateOperation", apiResp)
 	}
 
 	var result KmipCreateAPIResponse

@@ -47,7 +47,7 @@ func (s *KmipServer) loadCertificates() error {
 		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.server.InfisicalAuth.GetAccessToken())).
 		SetHeader("Content-Type", "application/json").
 		SetBody(payload).
-		Post(fmt.Sprintf("%s/api/v1/kmip/server-registration", s.server.InfisicalBaseAPIURL))
+		Post(fmt.Sprintf("%s/v1/kmip/server-registration", s.server.InfisicalBaseAPIURL))
 
 	if err != nil {
 		s.server.Log.Printf("Error: %+v\n", err)

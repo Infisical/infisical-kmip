@@ -1,6 +1,6 @@
 # Infisical KMIP
 
-[![Documentation](https://infisical.com/docs/documentation/platform/kms/kmip)](https://infisical.com/docs/documentation/platform/kms/kmip)
+[![Documentation](https://img.shields.io/badge/docs-online-blue)](https://infisical.com/docs/documentation/platform/kms/kmip)
 [![Go Report Card](https://goreportcard.com/badge/github.com/infisical/infisical-kmip)](https://goreportcard.com/report/github.com/infisical/infisical-kmip)
 
 Infisical KMIP is a fork of the [go-kmip](https://github.com/smira/go-kmip) project, extended to integrate with Infisical as a Key Management Service (KMS) for comprehensive key management and security solutions. It is designed to be used with KMIP clients, enabling seamless interaction with Infisical's KMS capabilities.

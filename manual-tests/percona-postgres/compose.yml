@@ -1,0 +1,18 @@
+version: "3.8"
+
+services:
+  percona-pg-1:
+    image: percona/percona-distribution-postgresql:latest
+    container_name: percona-postgres-db-1
+    restart: unless-stopped
+    environment:
+      - POSTGRES_PASSWORD=password
+      - ENABLE_PG_TDE=1
+    ports:
+      - "5433:5432"
+    volumes:
+      - percona_pg_data:/var/lib/postgresql/data
+      - ./certs:/etc/pg/certs
+
+volumes:
+  percona_pg_data:

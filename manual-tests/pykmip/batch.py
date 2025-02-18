@@ -1,5 +1,3 @@
-import ssl
-
 from kmip.pie.client import ProxyKmipClient, enums
 from kmip.core.enums import CryptographicAlgorithm
 
@@ -19,7 +17,14 @@ client = ProxyKmipClient(
 
 client.open()
 
-object = client.get("f0e177c2-c5d3-49e4-a668-596fe172aef5")
+object_id = client.create(
+    CryptographicAlgorithm.AES,
+    256,
+)
+
+object = client.get(object_id)
 print(object.cryptographic_algorithm)
 print(object.cryptographic_length)
 print(object.cryptographic_usage_masks)
+
+client.destroy(object_id)

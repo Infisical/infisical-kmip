@@ -5,7 +5,7 @@
 
 Infisical KMIP is a fork of the [go-kmip](https://github.com/smira/go-kmip) project, extended to integrate with Infisical as a Key Management Service (KMS) for comprehensive key management and security solutions. It is designed to be used with KMIP clients, enabling seamless interaction with Infisical's KMS capabilities.
 
-This package implements a subset of the [KMIP 1.4](http://docs.oasis-open.org/kmip/spec/v1.4/os/kmip-spec-v1.4-os.html) protocol, including basic client/server operations. Additional operations and fields can be implemented by adding required Go structures with KMIP tags.
+This package implements a subset of the [KMIP 1.4](http://docs.oasis-open.org/kmip/spec/v1.4/os/kmip-spec-v1.4-os.html) protocol, including basic client/server operations.
 
 ## Features
 

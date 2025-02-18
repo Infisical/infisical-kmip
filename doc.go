@@ -1,22 +1,36 @@
-// Package kmip implements KMIP protocol
+// Package kmip implements the KMIP protocol with extensions for Infisical KMS.
 //
-// KMIP protocol is used to access KMS solutions: generating keys, certificates,
-// accessing stored objects, etc.
+// Infisical KMIP is a fork of the go-kmip project, extended to integrate with
+// Infisical as a Key Management Service (KMS) for comprehensive key management
+// and security solutions. It is designed to be used with KMIP clients, enabling
+// seamless interaction with Infisical's KMS capabilities.
 //
-// KMIP is using TTLV-like encoding, which is implemented in this packaged
-// as encoding/decoding of Go struct types. Go struct fields are annotated with
-// `kmip` tags which specify KMIP tag names. Field is encoded/decoded according
-// to its tag, type.
+// This package implements a subset of the KMIP 1.4 protocol, including basic
+// client/server operations. Additional operations and fields can be implemented
+// by adding required Go structures with KMIP tags.
 //
-// Two high-level objects are implemented: Server and Client. Server listens for
-// TLS connections, does initial handshake and processes batch requests from the
-// clients. Processing of specific operations is delegated to operation handlers.
-// Client objects establishes connection with the KMIP server and allows sending
-// any number of requests over the connection.
+// Features:
+//   - Infisical KMS Integration: Extended to work with Infisical as a KMS, providing
+//     enhanced key management capabilities.
+//   - Full Key Management: Implements key processing and management functionalities.
 //
-// Not all the KMIP operations have corresponding Go structs, missing ones should
-// be added to operations.go, and dynamic type dispatch to
-// RequestBatchItem/ResponseBatchItem.BuildFieldValue methods.
+// Supported Operations:
+// The server currently supports the following KMIP operations, primarily for
+// symmetric keys:
+// - Create: Create symmetric keys.
+// - Register: Register symmetric keys.
+// - Locate: Locate keys based on attributes.
+// - Get: Retrieve symmetric keys.
+// - Activate: Activate keys.
+// - Revoke: Revoke keys.
+// - Destroy: Destroy keys.
+// - Get Attributes: Retrieve attributes of keys.
+// - Query: Query server capabilities and supported operations.
+//
+// Compatibility:
+//   - Tested KMIP Versions: The server has been tested for compatibility with KMIP
+//     versions 1.0 to 1.4.
+
 package kmip
 
 /* This Source Code Form is subject to the terms of the Mozilla Public

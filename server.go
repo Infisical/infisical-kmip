@@ -107,7 +107,7 @@ type RequestContext struct {
 func (s *Server) ListenAndServe(initializedCh chan struct{}) error {
 	addr := s.Addr
 	if addr == "" {
-		addr = ":5696"
+		addr = "localhost:5696"
 	}
 
 	l, err := tls.Listen("tcp", addr, s.TLSConfig)

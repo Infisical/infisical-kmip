@@ -13,6 +13,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -141,6 +142,8 @@ func StartServer(config ServerConfig) {
 
 	kmip.server.Log = log.New(os.Stderr, "[kmip] ", log.LstdFlags)
 
+	// Remove "/api" suffix if it exists in the InfisicalBaseAPIURL
+	kmip.server.InfisicalBaseAPIURL = strings.TrimSuffix(kmip.server.InfisicalBaseAPIURL, "/api")
 	infisicalClient := infisical.NewInfisicalClient(context.Background(), infisical.Config{
 		SiteUrl:          kmip.server.InfisicalBaseAPIURL,
 		AutoTokenRefresh: true,

@@ -1,34 +1,39 @@
-go-kmip
-=======
+# Infisical KMIP
 
-[![Build Status](https://travis-ci.org/smira/go-kmip.svg?branch=master)](https://travis-ci.org/smira/go-kmip)
-[![codecov](https://codecov.io/gh/smira/go-kmip/branch/master/graph/badge.svg)](https://codecov.io/gh/smira/go-kmip)
-[![Documentation](https://godoc.org/github.com/smira/go-kmip?status.svg)](http://godoc.org/github.com/smira/go-kmip)
-[![Go Report Card](https://goreportcard.com/badge/github.com/smira/go-kmip)](https://goreportcard.com/report/github.com/smira/go-kmip)
+[![Documentation](https://infisical.com/docs/documentation/platform/kms/kmip)](https://infisical.com/docs/documentation/platform/kms/kmip)
+[![Go Report Card](https://goreportcard.com/badge/github.com/infisical/infisical-kmip)](https://goreportcard.com/report/github.com/infisical/infisical-kmip)
 
-go-kmip implements subset of [KMIP 1.4](http://docs.oasis-open.org/kmip/spec/v1.4/os/kmip-spec-v1.4-os.html) protocol.
+Infisical KMIP is a fork of the [go-kmip](https://github.com/smira/go-kmip) project, extended to integrate with Infisical as a Key Management Service (KMS) for comprehensive key management and security solutions. It is designed to be used with KMIP clients, enabling seamless interaction with Infisical's KMS capabilities.
 
-Basic TTLV encoding/decoding is fully implemented, as well as the basic client/server operations. 
-Other operations and fields could be implemented by adding required Go structures with KMIP tags.
+This package implements a subset of the [KMIP 1.4](http://docs.oasis-open.org/kmip/spec/v1.4/os/kmip-spec-v1.4-os.html) protocol, including basic client/server operations. Additional operations and fields can be implemented by adding required Go structures with KMIP tags.
 
-KMIP protocol is used to access KMS solutions: generating keys, certificates,
-accessing stored objects, etc.
+## Features
 
-KMIP is using TTLV-like encoding, which is implemented in this packaged
-as encoding/decoding of Go struct types. Go struct fields are annotated with
-`kmip` tags which specify KMIP tag names. Field is encoded/decoded according
-to its tag, type.
+- **Infisical KMS Integration**: Extended to work with Infisical as a KMS, providing enhanced key management capabilities.
+- **Full Key Management**: Implements key processing and management functionalities.
 
-Two high-level objects are implemented: Server and Client. Server listens for
-TLS connections, does initial handshake and processes batch requests from the
-clients. Processing of specific operations is delegated to operation handlers.
-Client objects establishes connection with the KMIP server and allows sending
-any number of requests over the connection.
+## Supported Operations
 
-This package doesn't implement any actual key processing or management - it's outside
-the scope of this package.
+The server currently supports the following KMIP operations, primarily for symmetric keys:
 
-License
--------
+- **Create**: Create symmetric keys.
+- **Register**: Register symmetric keys.
+- **Locate**: Locate keys based on attributes.
+- **Get**: Retrieve symmetric keys.
+- **Activate**: Activate keys.
+- **Revoke**: Revoke keys.
+- **Destroy**: Destroy keys.
+- **Get Attributes**: Retrieve attributes of keys.
+- **Query**: Query server capabilities and supported operations.
+
+## Compatibility
+
+- **Tested KMIP Versions**: The server has been tested for compatibility with KMIP versions 1.0 to 1.4.
+
+## Recent Changes
+
+- **Extension for Infisical KMS**: The fork has been extended to integrate with Infisical as a KMS, moving beyond the original encoding/decoding and base-level implementation.
+
+## License
 
 This code is licensed under [MPL 2.0](https://www.mozilla.org/en-US/MPL/2.0/).

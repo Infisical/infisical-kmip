@@ -134,6 +134,17 @@ type ServerConfig struct {
 
 func StartServer(config ServerConfig) {
 	kmip := &KmipServer{}
+
+	err := ValidateHostnamesOrIPs(config.HostnamesOrIps)
+	if err != nil {
+		log.Fatalf("Validation for field HostnamesOrIps failed. %v", err)
+	}
+
+	err = ValidateDuration(config.CertificateTTL)
+	if err != nil {
+		log.Fatalf("Validation for field CertificateTTL failed. %v", err)
+	}
+
 	kmip.server.Addr = config.Addr
 	kmip.server.InfisicalBaseAPIURL = config.InfisicalBaseAPIURL
 	kmip.server.ServerName = config.ServerName
@@ -152,7 +163,7 @@ func StartServer(config ServerConfig) {
 	machineIdentityClientSecret := config.IdentityClientSecret
 
 	// TODO: add support for other auth methods
-	_, err := kmip.server.InfisicalAuth.UniversalAuthLogin(machineIdentityClientId, machineIdentityClientSecret)
+	_, err = kmip.server.InfisicalAuth.UniversalAuthLogin(machineIdentityClientId, machineIdentityClientSecret)
 	if err != nil {
 		log.Fatalf("error authenticating with Infisical. %v", err)
 		return

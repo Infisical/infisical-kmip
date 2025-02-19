@@ -453,7 +453,7 @@ func (s *Server) handleLocate(req *RequestContext, item *RequestBatchItem) (resp
 		SetHeader("X-Kmip-Project-Id", req.SessionAuth.ProjectId).
 		SetHeader("X-Kmip-Client-Id", req.SessionAuth.ClientId).
 		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.InfisicalAuth.GetAccessToken())).
-		Post(fmt.Sprintf("%s/v1/kmip-operations/locate", s.InfisicalBaseAPIURL))
+		Post(fmt.Sprintf("%s/v1/kmip/spec/locate", s.InfisicalBaseAPIURL))
 
 	if err != nil {
 		s.Log.Printf("Error: %+v\n", err)
@@ -662,7 +662,7 @@ func (s *Server) handleRegister(req *RequestContext, item *RequestBatchItem) (re
 		SetHeader("X-Kmip-Client-Id", req.SessionAuth.ClientId).
 		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.InfisicalAuth.GetAccessToken())).
 		SetBody(payload).
-		Post(fmt.Sprintf("%s/v1/kmip-operations/register", s.InfisicalBaseAPIURL))
+		Post(fmt.Sprintf("%s/v1/kmip/spec/register", s.InfisicalBaseAPIURL))
 
 	if err != nil {
 		s.Log.Printf("Error: %+v\n", err)
@@ -710,7 +710,7 @@ func (s *Server) handleActivate(req *RequestContext, item *RequestBatchItem) (re
 		SetHeader("X-Kmip-Client-Id", req.SessionAuth.ClientId).
 		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.InfisicalAuth.GetAccessToken())).
 		SetBody(payload).
-		Post(fmt.Sprintf("%s/v1/kmip-operations/activate", s.InfisicalBaseAPIURL))
+		Post(fmt.Sprintf("%s/v1/kmip/spec/activate", s.InfisicalBaseAPIURL))
 
 	if err != nil {
 		s.Log.Printf("Error: %+v\n", err)
@@ -761,7 +761,7 @@ func (s *Server) handleRevoke(req *RequestContext, item *RequestBatchItem) (resp
 		SetHeader("X-Kmip-Client-Id", req.SessionAuth.ClientId).
 		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.InfisicalAuth.GetAccessToken())).
 		SetBody(payload).
-		Post(fmt.Sprintf("%s/v1/kmip-operations/revoke", s.InfisicalBaseAPIURL))
+		Post(fmt.Sprintf("%s/v1/kmip/spec/revoke", s.InfisicalBaseAPIURL))
 
 	if err != nil {
 		s.Log.Printf("Error: %+v\n", err)
@@ -815,7 +815,7 @@ func (s *Server) handleGet(req *RequestContext, item *RequestBatchItem) (resp in
 		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.InfisicalAuth.GetAccessToken())).
 		SetHeader("Content-Type", "application/json").
 		SetBody(payload).
-		Post(fmt.Sprintf("%s/v1/kmip-operations/get", s.InfisicalBaseAPIURL))
+		Post(fmt.Sprintf("%s/v1/kmip/spec/get", s.InfisicalBaseAPIURL))
 
 	if err != nil {
 		s.Log.Printf("Error: %+v\n", err)
@@ -867,7 +867,7 @@ func (s *Server) handleGet(req *RequestContext, item *RequestBatchItem) (resp in
 			SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.InfisicalAuth.GetAccessToken())).
 			SetHeader("Content-Type", "application/json").
 			SetBody(payload).
-			Post(fmt.Sprintf("%s/v1/kmip-operations/get", s.InfisicalBaseAPIURL))
+			Post(fmt.Sprintf("%s/v1/kmip/spec/get", s.InfisicalBaseAPIURL))
 
 		if err != nil {
 			s.Log.Printf("Error: %+v\n", err)
@@ -945,7 +945,7 @@ func (s *Server) handleDestroy(req *RequestContext, item *RequestBatchItem) (res
 		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.InfisicalAuth.GetAccessToken())).
 		SetHeader("Content-Type", "application/json").
 		SetBody(payload).
-		Post(fmt.Sprintf("%s/v1/kmip-operations/destroy", s.InfisicalBaseAPIURL))
+		Post(fmt.Sprintf("%s/v1/kmip/spec/destroy", s.InfisicalBaseAPIURL))
 
 	if err != nil {
 		s.Log.Printf("Error: %+v\n", err)
@@ -1000,7 +1000,7 @@ func (s *Server) handleGetAttributes(req *RequestContext, item *RequestBatchItem
 		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.InfisicalAuth.GetAccessToken())).
 		SetHeader("Content-Type", "application/json").
 		SetBody(payload).
-		Post(fmt.Sprintf("%s/v1/kmip-operations/get-attributes", s.InfisicalBaseAPIURL))
+		Post(fmt.Sprintf("%s/v1/kmip/spec/get-attributes", s.InfisicalBaseAPIURL))
 
 	if err != nil {
 		s.Log.Printf("Error: %+v\n", err)
@@ -1182,7 +1182,7 @@ func (s *Server) handleCreate(req *RequestContext, item *RequestBatchItem) (resp
 		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.InfisicalAuth.GetAccessToken())).
 		SetHeader("Content-Type", "application/json").
 		SetBody(payload).
-		Post(fmt.Sprintf("%s/v1/kmip-operations/create", s.InfisicalBaseAPIURL))
+		Post(fmt.Sprintf("%s/v1/kmip/spec/create", s.InfisicalBaseAPIURL))
 
 	if err != nil {
 		s.Log.Printf("Error: %+v\n", err)

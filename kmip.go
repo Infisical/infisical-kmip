@@ -23,9 +23,10 @@ import (
 )
 
 type CertificateSet struct {
-	ServerKey    crypto.PrivateKey
-	ServerCert   *x509.Certificate
-	ServerCAPool *x509.CertPool
+	ServerKey              crypto.PrivateKey
+	ServerCert             *x509.Certificate
+	ServerCertificateChain string
+	ServerCAPool           *x509.CertPool
 }
 
 type KmipServer struct {
@@ -99,6 +100,8 @@ func (s *KmipServer) loadCertificates() error {
 	if err != nil {
 		return errors.Wrapf(err, "error parsing server cert")
 	}
+
+	s.certs.ServerCertificateChain = result.CertificateChain
 
 	s.certs.ServerCAPool = x509.NewCertPool()
 	clientChainPemBytes := []byte(result.ClientCertificateChain)
@@ -200,9 +203,35 @@ func StartServer(config ServerConfig) {
 	kmip.server.CertificatePrivateKey = kmip.certs.ServerKey
 	kmip.server.CertificateSerialNumber = kmip.certs.ServerCert.SerialNumber.Text(16)
 
+	// Parse the server certificate chain, excluding root certificates
+	var certChain [][]byte
+	certChain = append(certChain, kmip.certs.ServerCert.Raw)
+
+	if kmip.certs.ServerCertificateChain != "" {
+		chainPemBytes := []byte(kmip.certs.ServerCertificateChain)
+		for {
+			block, rest := pem.Decode(chainPemBytes)
+			if block == nil {
+				break
+			}
+
+			cert, err := x509.ParseCertificate(block.Bytes)
+			if err != nil {
+				kmip.server.Log.Printf("Warning: error parsing certificate in server chain: %v", err)
+				break
+			}
+
+			if cert.Issuer.String() != cert.Subject.String() {
+				certChain = append(certChain, cert.Raw)
+			}
+
+			chainPemBytes = rest
+		}
+	}
+
 	kmip.server.TLSConfig.Certificates = []tls.Certificate{
 		{
-			Certificate: [][]byte{kmip.certs.ServerCert.Raw},
+			Certificate: certChain,
 			PrivateKey:  kmip.certs.ServerKey,
 		},
 	}

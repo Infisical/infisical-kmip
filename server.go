@@ -400,6 +400,7 @@ func (s *Server) handleWrapped(request *RequestContext, item *RequestBatchItem) 
 	handler := s.handlers[item.Operation]
 
 	if handler == nil {
+		s.Log.Printf("[WARN] [%s] Operation not supported: %s", request.SessionID, operationMap[item.Operation])
 		err = wrapError(errors.New("operation not supported"), RESULT_REASON_OPERATION_NOT_SUPPORTED)
 		return
 	}

@@ -6,8 +6,6 @@ package kmip
 
 import (
 	"time"
-
-	"github.com/pkg/errors"
 )
 
 // Request is a Request Message Structure
@@ -70,7 +68,9 @@ func (bi *RequestBatchItem) BuildFieldValue(name string) (v interface{}, err err
 	case OPERATION_REVOKE:
 		v = &RevokeRequest{}
 	default:
-		err = errors.Errorf("unsupported operation: %v", bi.Operation)
+		// For unsupported operations, use a generic payload to allow decoding to complete
+		// The server will handle the "unsupported operation" error in the handler phase
+		v = &GenericRequestPayload{}
 	}
 
 	return
@@ -99,4 +99,37 @@ type RevocationReason struct {
 
 	RevocationReasonCode Enum   `kmip:"REVOCATION_REASON_CODE"`
 	RevocationMessage    string `kmip:"REVOCATION_REASON"`
+}
+
+// GenericRequestPayload is used for unsupported operations to allow decoding to complete
+// The server will handle the "unsupported operation" error in the handler phase
+type GenericRequestPayload struct {
+	Tag `kmip:"REQUEST_PAYLOAD"`
+
+	// Common fields that might appear in any request payload
+	UniqueIdentifier            string                   `kmip:"UNIQUE_IDENTIFIER"`
+	ObjectType                  Enum                     `kmip:"OBJECT_TYPE"`
+	TemplateAttribute           TemplateAttribute        `kmip:"TEMPLATE_ATTRIBUTE"`
+	KeyFormatType               Enum                     `kmip:"KEY_FORMAT_TYPE"`
+	KeyWrapType                 Enum                     `kmip:"KEY_WRAP_TYPE"`
+	KeyCompressionType          Enum                     `kmip:"KEY_COMPRESSION_TYPE"`
+	KeyWrappingSpec             KeyWrappingSpecification `kmip:"KEY_WRAPPING_SPECIFICATION"`
+	QueryFunctions              []Enum                   `kmip:"QUERY_FUNCTION"`
+	ProtocolVersions            []ProtocolVersion        `kmip:"PROTOCOL_VERSION"`
+	CryptoParams                CryptoParams             `kmip:"CRYPTOGRAPHIC_PARAMETERS"`
+	Data                        []byte                   `kmip:"DATA"`
+	IVCounterNonce              []byte                   `kmip:"IV_COUNTER_NONCE"`
+	CorrelationValue            []byte                   `kmip:"CORRELATION_VALUE"`
+	InitIndicator               bool                     `kmip:"INIT_INDICATOR"`
+	FinalIndicator              bool                     `kmip:"FINAL_INDICATOR"`
+	AdditionalData              []byte                   `kmip:"AUTHENTICATED_ENCRYPTION_ADDITIONAL_DATA"`
+	AuthTag                     []byte                   `kmip:"AUTHENTICATED_ENCRYPTION_TAG"`
+	SignatureData               []byte                   `kmip:"SIGNATURE_DATA"`
+	MACData                     []byte                   `kmip:"MAC_DATA"`
+	SymmetricKey                SymmetricKey             `kmip:"SYMMETRIC_KEY"`
+	PrivateKey                  PrivateKey               `kmip:"PRIVATE_KEY"`
+	PublicKey                   PublicKey                `kmip:"PUBLIC_KEY"`
+	CommonTemplateAttribute     TemplateAttribute        `kmip:"COMMON_TEMPLATE_ATTRIBUTE"`
+	PrivateKeyTemplateAttribute TemplateAttribute        `kmip:"PRIVATE_KEY_TEMPLATE_ATTRIBUTE"`
+	PublicKeyTemplateAttribute  TemplateAttribute        `kmip:"PUBLIC_KEY_TEMPLATE_ATTRIBUTE"`
 }

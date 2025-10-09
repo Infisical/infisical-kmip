@@ -67,6 +67,8 @@ func (bi *RequestBatchItem) BuildFieldValue(name string) (v interface{}, err err
 		v = &LocateRequest{}
 	case OPERATION_REVOKE:
 		v = &RevokeRequest{}
+	case OPERATION_QUERY:
+		v = &QueryRequest{}
 	default:
 		// For unsupported operations, use a generic payload to allow decoding to complete
 		// The server will handle the "unsupported operation" error in the handler phase

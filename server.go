@@ -616,31 +616,62 @@ func (s *Server) handleRegister(req *RequestContext, item *RequestBatchItem) (re
 		return nil, wrapError(errors.New("wrong request body"), RESULT_REASON_INVALID_MESSAGE)
 	}
 
-	if request.SymmetricKey.KeyBlock.FormatType != KEY_FORMAT_RAW {
-		return nil, wrapError(errors.New("unsupported key format"), RESULT_REASON_INVALID_FIELD)
-	}
-
-	if request.SymmetricKey.KeyBlock.CryptographicAlgorithm != CRYPTO_AES {
-		return nil, wrapError(errors.New("unsupported algorithm"), RESULT_REASON_INVALID_FIELD)
-	}
-
-	if request.SymmetricKey.KeyBlock.CryptographicLength != 128 && request.SymmetricKey.KeyBlock.CryptographicLength != 256 {
-		return nil, wrapError(errors.New("unsupported cryptographic length"), RESULT_REASON_INVALID_FIELD)
-	}
-
-	if request.SymmetricKey.KeyBlock.WrappingData.WrappingMethod != 0 {
-		return nil, wrapError(errors.New("unsupported wrapping method"), RESULT_REASON_INVALID_FIELD)
-	}
-
+	var payload KmipRegisterAPIRequest
+	var keyData []byte
 	var algorithm string
-	if request.SymmetricKey.KeyBlock.CryptographicLength == 128 {
-		algorithm = "aes-128-gcm"
-	} else {
-		algorithm = "aes-256-gcm"
+
+	// Handle different object types
+	switch request.ObjectType {
+	case OBJECT_TYPE_SYMMETRIC_KEY:
+		if request.SymmetricKey.KeyBlock.FormatType != KEY_FORMAT_RAW {
+			return nil, wrapError(errors.New("unsupported key format"), RESULT_REASON_INVALID_FIELD)
+		}
+
+		if request.SymmetricKey.KeyBlock.CryptographicAlgorithm != CRYPTO_AES {
+			return nil, wrapError(errors.New("unsupported algorithm"), RESULT_REASON_INVALID_FIELD)
+		}
+
+		if request.SymmetricKey.KeyBlock.CryptographicLength != 128 && request.SymmetricKey.KeyBlock.CryptographicLength != 256 {
+			return nil, wrapError(errors.New("unsupported cryptographic length"), RESULT_REASON_INVALID_FIELD)
+		}
+
+		if request.SymmetricKey.KeyBlock.WrappingData.WrappingMethod != 0 {
+			return nil, wrapError(errors.New("unsupported wrapping method"), RESULT_REASON_INVALID_FIELD)
+		}
+
+		keyData = request.SymmetricKey.KeyBlock.Value.KeyMaterial
+		if request.SymmetricKey.KeyBlock.CryptographicLength == 128 {
+			algorithm = "aes-128-gcm"
+		} else {
+			algorithm = "aes-256-gcm"
+		}
+
+	case OBJECT_TYPE_SECRET_DATA:
+		keyData = request.SecretData.KeyBlock.Value.KeyMaterial
+
+		if len(keyData) == 0 {
+			return nil, wrapError(errors.New("secret data is empty"), RESULT_REASON_INVALID_FIELD)
+		}
+
+		dataLength := len(keyData) * 8 // Convert bytes to bits
+		if dataLength == 128 {
+			algorithm = "aes-128-gcm"
+		} else if dataLength == 256 {
+			algorithm = "aes-256-gcm"
+		} else {
+			algorithm = "aes-256-gcm"
+		}
+
+		if request.SecretData.KeyBlock.WrappingData.WrappingMethod != 0 {
+			return nil, wrapError(errors.New("unsupported wrapping method for secret data"), RESULT_REASON_INVALID_FIELD)
+		}
+
+	default:
+		return nil, wrapError(errors.New("unsupported object type"), RESULT_REASON_INVALID_FIELD)
 	}
 
-	payload := KmipRegisterAPIRequest{
-		Key:       base64.StdEncoding.EncodeToString(request.SymmetricKey.KeyBlock.Value.KeyMaterial),
+	payload = KmipRegisterAPIRequest{
+		Key:       base64.StdEncoding.EncodeToString(keyData),
 		Algorithm: algorithm,
 	}
 
@@ -832,7 +863,6 @@ func (s *Server) handleGet(req *RequestContext, item *RequestBatchItem) (resp in
 		return nil, errors.Wrap(err, "failed to decode response")
 	}
 
-	response.ObjectType = OBJECT_TYPE_SYMMETRIC_KEY
 	response.UniqueIdentifier = result.Id
 
 	decodedValue, err := base64.StdEncoding.DecodeString(result.Value)
@@ -840,8 +870,11 @@ func (s *Server) handleGet(req *RequestContext, item *RequestBatchItem) (resp in
 		return nil, errors.Wrap(err, "failed to decode base64 value")
 	}
 
-	response.SymmetricKey.KeyBlock.Value.KeyMaterial = []byte(decodedValue)
-	response.SymmetricKey.KeyBlock.FormatType = KEY_FORMAT_RAW
+	// TODO: UPDATE BASED ON RESPONSE FROM API
+	response.ObjectType = OBJECT_TYPE_SECRET_DATA
+	response.SecretData.KeyBlock.Value.KeyMaterial = []byte(decodedValue)
+	response.SecretData.KeyBlock.FormatType = KEY_FORMAT_RAW
+	response.SecretData.SecretDataType = SECRET_DATA_TYPE_PASSWORD // Default for SEDS
 
 	if request.KeyWrappingSpec.WrappingMethod != 0 {
 		if request.KeyWrappingSpec.WrappingMethod != WRAPPING_METHOD_ENCRYPT {
@@ -1126,6 +1159,7 @@ func (s *Server) handleQuery(req *RequestContext, item *RequestBatchItem) (resp 
 	if !ContainsEnum(request.QueryFunctions, QUERY_OBJECTS) {
 		response.ObjectTypes = []Enum{
 			OBJECT_TYPE_SYMMETRIC_KEY,
+			OBJECT_TYPE_SECRET_DATA,
 		}
 	}
 

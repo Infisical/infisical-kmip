@@ -465,6 +465,13 @@ const (
 	OBJECT_TYPE_CERTIFICATE_REQUEST Enum = 0x0000000A
 )
 
+// KMIP Secret Data Types
+const (
+	// KMIP 1.0
+	SECRET_DATA_TYPE_PASSWORD Enum = 0x00000001
+	SECRET_DATA_TYPE_SEED     Enum = 0x00000002
+)
+
 // KMIP States
 const (
 	// KMIP 1.0

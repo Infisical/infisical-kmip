@@ -49,10 +49,11 @@ type GetRequest struct {
 type GetResponse struct {
 	ObjectType       Enum   `kmip:"OBJECT_TYPE,required"`
 	UniqueIdentifier string `kmip:"UNIQUE_IDENTIFIER,required"`
-	// Response might contain one of SymmetricKey, Certificate, ...
+	// Response might contain one of SymmetricKey, Certificate, SecretData, ...
 	SymmetricKey SymmetricKey `kmip:"SYMMETRIC_KEY"`
 	PrivateKey   PrivateKey   `kmip:"PRIVATE_KEY"`
 	PublicKey    PublicKey    `kmip:"PUBLIC_KEY"`
+	SecretData   SecretData   `kmip:"SECRET_DATA"`
 }
 
 // GetAttributesRequest is a Get Attributes Request Payload
@@ -127,9 +128,19 @@ type QueryRequest struct {
 
 // QueryResponse is a Query Response Payload
 type QueryResponse struct {
-	Operations           []Enum `kmip:"OPERATION"`
-	ObjectTypes          []Enum `kmip:"OBJECT_TYPE"`
-	VendorIdentification string `kmip:"VENDOR_IDENTIFICATION"`
+	Operations           []Enum               `kmip:"OPERATION"`
+	ObjectTypes          []Enum               `kmip:"OBJECT_TYPE"`
+	VendorIdentification string               `kmip:"VENDOR_IDENTIFICATION"`
+	ProfileInformation   []ProfileInformation `kmip:"PROFILE_INFORMATION"`
+}
+
+// ProfileInformation is a Profile Information Structure
+type ProfileInformation struct {
+	Tag `kmip:"PROFILE_INFORMATION"`
+
+	ProfileName Enum   `kmip:"PROFILE_NAME,required"`
+	ServerURI   string `kmip:"SERVER_URI"`
+	ServerPort  int32  `kmip:"SERVER_PORT"`
 }
 
 // EncryptRequest is an Encrypt Request Payload
@@ -194,10 +205,12 @@ type SignResponse struct {
 type RegisterRequest struct {
 	ObjectType        Enum              `kmip:"OBJECT_TYPE,required"`
 	TemplateAttribute TemplateAttribute `kmip:"TEMPLATE_ATTRIBUTE,required"`
-	// Request might contain one of SymmetricKey, Certificate, ...
+	// Request might contain one of SymmetricKey, Certificate, SecretData, Template, ...
 	SymmetricKey SymmetricKey `kmip:"SYMMETRIC_KEY"`
 	PrivateKey   PrivateKey   `kmip:"PRIVATE_KEY"`
 	PublicKey    PublicKey    `kmip:"PUBLIC_KEY"`
+	SecretData   SecretData   `kmip:"SECRET_DATA"`
+	Template     Template     `kmip:"TEMPLATE"`
 }
 
 // RegisterResponse is a Register Response Payload

@@ -3,9 +3,10 @@ package kmip
 import "time"
 
 type KmipGetAPIResponse struct {
-	Id        string `json:"id"`
-	Value     string `json:"value"`
-	Algorithm string `json:"algorithm"`
+	Id           string       `json:"id"`
+	Value        string       `json:"value"`
+	Algorithm    string       `json:"algorithm"`
+	KmipMetadata KmipMetadata `json:"kmipMetadata"`
 }
 
 type KmipGetAPIRequest struct {
@@ -66,10 +67,17 @@ type KmipLocateAPIResponse struct {
 	} `json:"objects"`
 }
 
+type KmipMetadata struct {
+	SecretDataType       int `json:"secretDataType"`
+	SecretDataFormatType int `json:"secretDataFormatType"`
+	ObjectType           int `json:"objectType"`
+}
+
 type KmipRegisterAPIRequest struct {
-	Name      string `json:"name"`
-	Key       string `json:"key"`
-	Algorithm string `json:"algorithm"`
+	Name         string       `json:"name"`
+	Key          string       `json:"key"`
+	Algorithm    string       `json:"algorithm"`
+	KmipMetadata KmipMetadata `json:"kmipMetadata"`
 }
 
 type KmipRegisterAPIResponse struct {

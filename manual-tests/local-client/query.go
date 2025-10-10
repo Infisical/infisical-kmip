@@ -96,5 +96,6 @@ func main() {
 		fmt.Printf("Operations: %v\n", queryResp.Operations)
 		fmt.Printf("Object Types: %v\n", queryResp.ObjectTypes)
 		fmt.Printf("Vendor Identification: %s\n", queryResp.VendorIdentification)
+		fmt.Printf("Profile Information: %v\n", queryResp.ProfileInformation)
 	}
 }

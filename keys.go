@@ -116,3 +116,10 @@ type SecretData struct {
 	SecretDataType Enum     `kmip:"SECRET_DATA_TYPE,required"`
 	KeyBlock       KeyBlock `kmip:"KEY_BLOCK,required"`
 }
+
+// Template is a Managed Object that contains a template for creating other objects
+type Template struct {
+	Tag `kmip:"TEMPLATE"`
+
+	TemplateAttribute TemplateAttribute `kmip:"TEMPLATE_ATTRIBUTE,required"`
+}

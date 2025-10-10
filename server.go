@@ -666,13 +666,38 @@ func (s *Server) handleRegister(req *RequestContext, item *RequestBatchItem) (re
 			return nil, wrapError(errors.New("unsupported wrapping method for secret data"), RESULT_REASON_INVALID_FIELD)
 		}
 
+	case OBJECT_TYPE_TEMPLATE:
+		// Template objects don't contain cryptographic material, they contain attributes
+		// We'll handle Template objects separately without calling the register API
+		// Generate a unique identifier for the template
+		templateId := fmt.Sprintf("template-%d", time.Now().UnixNano())
+
+		// For Template objects, we don't need to call the external API
+		// Just return the template identifier
+		response.UniqueIdentifier = templateId
+		req.IdPlaceholder = templateId
+
+		response.TemplateAttribute = request.TemplateAttribute
+
+		return response, nil
+
 	default:
 		return nil, wrapError(errors.New("unsupported object type"), RESULT_REASON_INVALID_FIELD)
 	}
 
+	// Extract KMIP metadata for SecretData
+	var kmipMetadata = KmipMetadata{}
+	if request.ObjectType == OBJECT_TYPE_SECRET_DATA {
+		kmipMetadata.SecretDataType = int(request.SecretData.SecretDataType)
+		kmipMetadata.SecretDataFormatType = int(request.SecretData.KeyBlock.FormatType)
+	}
+
+	kmipMetadata.ObjectType = int(request.ObjectType)
+
 	payload = KmipRegisterAPIRequest{
-		Key:       base64.StdEncoding.EncodeToString(keyData),
-		Algorithm: algorithm,
+		Key:          base64.StdEncoding.EncodeToString(keyData),
+		Algorithm:    algorithm,
+		KmipMetadata: kmipMetadata,
 	}
 
 	for _, attribute := range request.TemplateAttribute.Attributes {
@@ -829,6 +854,16 @@ func (s *Server) handleGet(req *RequestContext, item *RequestBatchItem) (resp in
 		uniqueId = request.UniqueIdentifier
 	}
 
+	// Check if this is a Template object (starts with "template-")
+	if len(uniqueId) > 9 && uniqueId[:9] == "template-" {
+		// Handle Template objects without calling external API
+		response.ObjectType = OBJECT_TYPE_TEMPLATE
+		response.UniqueIdentifier = uniqueId
+		// Template objects don't have cryptographic material, just attributes
+		// You might store/retrieve template attributes here
+		return response, nil
+	}
+
 	if request.KeyCompressionType != 0 {
 		return nil, wrapError(errors.New("key compression is not supported"), RESULT_REASON_INVALID_FIELD)
 	}
@@ -870,13 +905,33 @@ func (s *Server) handleGet(req *RequestContext, item *RequestBatchItem) (resp in
 		return nil, errors.Wrap(err, "failed to decode base64 value")
 	}
 
-	// TODO: UPDATE BASED ON RESPONSE FROM API
-	response.ObjectType = OBJECT_TYPE_SECRET_DATA
-	response.SecretData.KeyBlock.Value.KeyMaterial = []byte(decodedValue)
-	response.SecretData.KeyBlock.FormatType = KEY_FORMAT_RAW
-	response.SecretData.SecretDataType = SECRET_DATA_TYPE_PASSWORD // Default for SEDS
+	// Use stored metadata from API response
+	if result.KmipMetadata.SecretDataType != 0 {
+		// This is a SecretData object
+		response.ObjectType = OBJECT_TYPE_SECRET_DATA
+		response.SecretData.KeyBlock.Value.KeyMaterial = []byte(decodedValue)
+		response.SecretData.KeyBlock.FormatType = Enum(result.KmipMetadata.SecretDataFormatType)
+		response.SecretData.SecretDataType = Enum(result.KmipMetadata.SecretDataType)
+	} else {
+		// This is a SymmetricKey object (default behavior)
+		response.ObjectType = OBJECT_TYPE_SYMMETRIC_KEY
+		response.SymmetricKey.KeyBlock.Value.KeyMaterial = []byte(decodedValue)
+		response.SymmetricKey.KeyBlock.FormatType = KEY_FORMAT_RAW
 
-	if request.KeyWrappingSpec.WrappingMethod != 0 {
+		// Set cryptographic parameters for SymmetricKey objects
+		if result.Algorithm == "aes-256-gcm" {
+			response.SymmetricKey.KeyBlock.CryptographicAlgorithm = CRYPTO_AES
+			response.SymmetricKey.KeyBlock.CryptographicLength = 256
+		} else if result.Algorithm == "aes-128-gcm" {
+			response.SymmetricKey.KeyBlock.CryptographicAlgorithm = CRYPTO_AES
+			response.SymmetricKey.KeyBlock.CryptographicLength = 128
+		} else {
+			return nil, errors.New("unsupported algorithm")
+		}
+	}
+
+	// Key wrapping is only supported for SymmetricKey objects
+	if request.KeyWrappingSpec.WrappingMethod != 0 && response.ObjectType == OBJECT_TYPE_SYMMETRIC_KEY {
 		if request.KeyWrappingSpec.WrappingMethod != WRAPPING_METHOD_ENCRYPT {
 			return nil, wrapError(errors.New("selected key wrapping method is not supported"), RESULT_REASON_INVALID_FIELD)
 		}
@@ -937,16 +992,6 @@ func (s *Server) handleGet(req *RequestContext, item *RequestBatchItem) (resp in
 				},
 			},
 		}
-	}
-
-	if result.Algorithm == "aes-256-gcm" {
-		response.SymmetricKey.KeyBlock.CryptographicAlgorithm = CRYPTO_AES
-		response.SymmetricKey.KeyBlock.CryptographicLength = 256
-	} else if result.Algorithm == "aes-128-gcm" {
-		response.SymmetricKey.KeyBlock.CryptographicAlgorithm = CRYPTO_AES
-		response.SymmetricKey.KeyBlock.CryptographicLength = 128
-	} else {
-		return nil, errors.New("unsupported algorithm")
 	}
 
 	return response, nil
@@ -1141,7 +1186,7 @@ func (s *Server) handleQuery(req *RequestContext, item *RequestBatchItem) (resp 
 		return nil, wrapError(errors.New("wrong request body"), RESULT_REASON_INVALID_MESSAGE)
 	}
 
-	if !ContainsEnum(request.QueryFunctions, QUERY_OPERATIONS) {
+	if ContainsEnum(request.QueryFunctions, QUERY_OPERATIONS) {
 		response.Operations = []Enum{
 			OPERATION_CREATE,
 			OPERATION_REGISTER,
@@ -1156,15 +1201,39 @@ func (s *Server) handleQuery(req *RequestContext, item *RequestBatchItem) (resp 
 		}
 	}
 
-	if !ContainsEnum(request.QueryFunctions, QUERY_OBJECTS) {
+	if ContainsEnum(request.QueryFunctions, QUERY_OBJECTS) {
 		response.ObjectTypes = []Enum{
 			OBJECT_TYPE_SYMMETRIC_KEY,
 			OBJECT_TYPE_SECRET_DATA,
+			OBJECT_TYPE_TEMPLATE,
 		}
 	}
 
-	if !ContainsEnum(request.QueryFunctions, QUERY_SERVER_INFORMATION) {
+	if ContainsEnum(request.QueryFunctions, QUERY_SERVER_INFORMATION) {
 		response.VendorIdentification = "Infisical KMIP Server"
+	}
+
+	if ContainsEnum(request.QueryFunctions, QUERY_PROFILES) {
+		response.ProfileInformation = []ProfileInformation{
+			{
+				ProfileName: PROFILE_NAME_BASELINE_SERVER_BASIC_KMIP_V1_2,
+			},
+			{
+				ProfileName: PROFILE_NAME_BASELINE_SERVER_TLS_V1_2_KMIP_V1_2,
+			},
+			{
+				ProfileName: PROFILE_NAME_STORAGE_ARRAY_SELF_ENCRYPTING_DRIVE_SERVER_KMIP_V1_0,
+			},
+			{
+				ProfileName: PROFILE_NAME_STORAGE_ARRAY_SELF_ENCRYPTING_DRIVE_SERVER_KMIP_V1_1,
+			},
+			{
+				ProfileName: PROFILE_NAME_STORAGE_ARRAY_SELF_ENCRYPTING_DRIVE_SERVER_KMIP_V1_2,
+			},
+			{
+				ProfileName: PROFILE_NAME_BASELINE_SERVER_BASIC_KMIP_V1_3,
+			},
+		}
 	}
 
 	return response, nil

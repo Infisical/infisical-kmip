@@ -488,6 +488,8 @@ func (s *Server) handleLocate(req *RequestContext, item *RequestBatchItem) (resp
 	var matchingIds []string
 
 	for _, object := range result.Objects {
+		s.Log.Printf("[DEBUG] Processing object: ID=%s, Name=%s, Algorithm=%s, IsActive=%v", object.Id, object.Name, object.Algorithm, object.IsActive)
+
 		var algorithm Enum
 		var cryptographicLength int32
 
@@ -555,7 +557,9 @@ func (s *Server) handleLocate(req *RequestContext, item *RequestBatchItem) (resp
 				if nameValue, ok := attribute.Value.(Name); ok {
 					slug.CustomSub = map[string]string{"_": "-"}
 					slugifiedName := slug.Make(nameValue.Value)
-					if slugifiedName != object.Name {
+					s.Log.Printf("[DEBUG] Name matching - Requested name: '%s', Slugified: '%s', Object name: '%s', Object ID: '%s'", nameValue.Value, slugifiedName, object.Name, object.Id)
+					if slugifiedName != object.Name && nameValue.Value != object.Id {
+						s.Log.Printf("[DEBUG] Name mismatch - continuing to next object")
 						shouldMatch = false
 						break
 					}
@@ -570,6 +574,7 @@ func (s *Server) handleLocate(req *RequestContext, item *RequestBatchItem) (resp
 			}
 		}
 
+		s.Log.Printf("[DEBUG] Object %s (name: %s) - shouldMatch: %v", object.Id, object.Name, shouldMatch)
 		if shouldMatch {
 			matchingIds = append(matchingIds, object.Id)
 		}
@@ -607,6 +612,8 @@ func (s *Server) handleLocate(req *RequestContext, item *RequestBatchItem) (resp
 
 	response.LocatedItems = int32(len(matchingIds))
 	response.UniqueIdentifiers = append(response.UniqueIdentifiers, matchingIds[offset:end]...)
+
+	s.Log.Printf("[DEBUG] Final results - Total matching IDs: %d, Returning IDs: %v", len(matchingIds), matchingIds[offset:end])
 
 	return response, nil
 }

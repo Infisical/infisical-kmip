@@ -446,6 +446,9 @@ func (s *Server) handleLocate(req *RequestContext, item *RequestBatchItem) (resp
 		return nil, wrapError(errors.New("wrong request body"), RESULT_REASON_INVALID_MESSAGE)
 	}
 
+	s.Log.Printf("[DEBUG] Locate request attributes: %+v\n", request.Attributes)
+	s.Log.Printf("[DEBUG] Locate request MaximumItems: %d, OffsetItems: %d\n", request.MaximumItems, request.OffsetItems)
+
 	client := resty.New()
 
 	apiResp, err := client.R().

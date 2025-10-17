@@ -512,8 +512,6 @@ func (s *Server) handleLocate(req *RequestContext, item *RequestBatchItem) (resp
 				if !ContainsString(unsupportedAttributes, attribute.Name) {
 					unsupportedAttributes = append(unsupportedAttributes, attribute.Name)
 				}
-				shouldMatch = false
-				break
 			}
 
 			if attribute.Name == ATTRIBUTE_NAME_OBJECT_TYPE {

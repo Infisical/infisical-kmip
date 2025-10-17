@@ -610,7 +610,7 @@ func (s *Server) handleLocate(req *RequestContext, item *RequestBatchItem) (resp
 		req.IdPlaceholder = matchingIds[0]
 	}
 
-	response.LocatedItems = int32(len(matchingIds))
+	// response.LocatedItems = int32(len(matchingIds))
 	response.UniqueIdentifiers = append(response.UniqueIdentifiers, matchingIds[offset:end]...)
 
 	s.Log.Printf("[DEBUG] Final results - Total matching IDs: %d, Returning IDs: %v", len(matchingIds), matchingIds[offset:end])

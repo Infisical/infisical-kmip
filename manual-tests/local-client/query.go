@@ -10,7 +10,7 @@ import (
 	kmip "github.com/infisical/infisical-kmip"
 )
 
-func main() {
+func ExecuteQuery() {
 	// Try to load client certificates
 	var cert tls.Certificate
 	var err error

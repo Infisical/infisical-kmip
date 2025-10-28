@@ -34,11 +34,12 @@ type KmipGetAttributeAPIRequest struct {
 }
 
 type KmipGetAttributeAPIResponse struct {
-	Id        string    `json:"id"`
-	Algorithm string    `json:"algorithm"`
-	IsActive  bool      `json:"isActive"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	Id           string       `json:"id"`
+	Algorithm    string       `json:"algorithm"`
+	IsActive     bool         `json:"isActive"`
+	CreatedAt    time.Time    `json:"createdAt"`
+	UpdatedAt    time.Time    `json:"updatedAt"`
+	KmipMetadata KmipMetadata `json:"kmipMetadata"`
 }
 
 type KmipActivateAPIRequest struct {
@@ -60,17 +61,24 @@ type KmipRevokeAPIResponse struct {
 
 type KmipLocateAPIResponse struct {
 	Objects []struct {
-		Id        string `json:"id"`
-		IsActive  bool   `json:"isActive"`
-		Algorithm string `json:"algorithm"`
-		Name      string `json:"name"`
+		Id           string       `json:"id"`
+		IsActive     bool         `json:"isActive"`
+		Algorithm    string       `json:"algorithm"`
+		Name         string       `json:"name"`
+		KmipMetadata KmipMetadata `json:"kmipMetadata"`
 	} `json:"objects"`
 }
 
+type AttributeMetadata struct {
+	Value interface{} `json:"value"`
+	Type  string      `json:"type"`
+}
+
 type KmipMetadata struct {
-	SecretDataType       int `json:"secretDataType"`
-	SecretDataFormatType int `json:"secretDataFormatType"`
-	ObjectType           int `json:"objectType"`
+	SecretDataType       int                        `json:"secretDataType"`
+	SecretDataFormatType int                        `json:"secretDataFormatType"`
+	ObjectType           int                        `json:"objectType"`
+	Attributes           map[string]AttributeMetadata `json:"attributes"`
 }
 
 type KmipRegisterAPIRequest struct {

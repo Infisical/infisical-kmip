@@ -78,9 +78,24 @@ func ExecuteRegister() {
 		},
 	}
 
-	// Create template attribute with the name
+	// Test custom attribute with x- prefix
+	customAttribute1 := kmip.Attribute{
+		Name:  "x-Isilon-ClusterGUID",
+		Value: "cluster-guid-12345",
+	}
+
+	// Test standard custom attribute approach
+	customAttribute2 := kmip.Attribute{
+		Name: kmip.ATTRIBUTE_NAME_CUSTOM_ATTRIBUTE,
+		Value: kmip.CustomAttribute{
+			AttributeName:  "x-my-custom-property", // This is where the x- prefix goes
+			AttributeValue: "some custom value",
+		},
+	}
+
+	// Create template attribute with all attributes
 	templateAttribute := kmip.TemplateAttribute{
-		Attributes: []kmip.Attribute{nameAttribute},
+		Attributes: []kmip.Attribute{nameAttribute, customAttribute1, customAttribute2},
 	}
 
 	// Create register request

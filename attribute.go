@@ -5,6 +5,7 @@ package kmip
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import (
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -36,8 +37,17 @@ func (a *Attribute) BuildFieldValue(name string) (v interface{}, err error) {
 		v = &Name{}
 	case ATTRIBUTE_NAME_DIGEST:
 		v = &Digest{}
+	case ATTRIBUTE_NAME_CUSTOM_ATTRIBUTE:
+		// Custom attributes can have any data type - return CustomAttribute structure
+		v = &CustomAttribute{}
 	default:
-		err = errors.Errorf("unsupported attribute: %v", a.Name)
+		// Check if this is a custom attribute with x-
+		if strings.HasPrefix(a.Name, "x-") {
+			// Custom attributes can have any data type - default to string for flexibility
+			v = ""
+		} else {
+			err = errors.Errorf("unsupported attribute: %v", a.Name)
+		}
 	}
 
 	return
@@ -80,4 +90,24 @@ type Digest struct {
 	HashingAlgorithm Enum   `kmip:"HASHING_ALGORITHM,required"`
 	DigestValue      []byte `kmip:"DIGEST_VALUE"`
 	KeyFormatType    Enum   `kmip:"KEY_FORMAT_TYPE"`
+}
+
+// CustomAttribute is a Custom Attribute Structure
+type CustomAttribute struct {
+	Tag `kmip:"CUSTOM_ATTRIBUTE"`
+
+	AttributeName  string      `kmip:"ATTRIBUTE_NAME,required"`
+	AttributeValue interface{} `kmip:"ATTRIBUTE_VALUE,required"`
+}
+
+// BuildFieldValue builds dynamic Value field for CustomAttribute
+func (ca *CustomAttribute) BuildFieldValue(name string) (v interface{}, err error) {
+	switch name {
+	case "AttributeValue":
+		// Custom attributes can have any data type - default to string for flexibility
+		v = ""
+	default:
+		err = errors.Errorf("unsupported field: %v", name)
+	}
+	return
 }

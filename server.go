@@ -16,6 +16,7 @@ import (
 	"log"
 	"net"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -690,7 +691,10 @@ func (s *Server) handleRegister(req *RequestContext, item *RequestBatchItem) (re
 	}
 
 	// Extract KMIP metadata for SecretData
-	var kmipMetadata = KmipMetadata{}
+	var kmipMetadata = KmipMetadata{
+		Attributes: make(map[string]AttributeMetadata),
+	}
+
 	if request.ObjectType == OBJECT_TYPE_SECRET_DATA {
 		kmipMetadata.SecretDataType = int(request.SecretData.SecretDataType)
 		kmipMetadata.SecretDataFormatType = int(request.SecretData.KeyBlock.FormatType)
@@ -710,6 +714,23 @@ func (s *Server) handleRegister(req *RequestContext, item *RequestBatchItem) (re
 				payload.Name = nameValue.Value
 			} else {
 				return nil, wrapError(errors.New("name attribute is not of type Name"), RESULT_REASON_INVALID_FIELD)
+			}
+		}
+		if strings.HasPrefix(attribute.Name, "x-") {
+			kmipMetadata.Attributes[attribute.Name] = AttributeMetadata{
+				Value: attribute.Value,
+				Type:  ATTRIBUTE_NAME_CUSTOM_ATTRIBUTE,
+			}
+		}
+
+		if attribute.Name == ATTRIBUTE_NAME_CUSTOM_ATTRIBUTE {
+			if customAttribute, ok := attribute.Value.(CustomAttribute); ok {
+				kmipMetadata.Attributes[customAttribute.AttributeName] = AttributeMetadata{
+					Value: customAttribute.AttributeValue,
+					Type:  ATTRIBUTE_NAME_CUSTOM_ATTRIBUTE,
+				}
+			} else {
+				fmt.Printf("custom attribute is not of type CustomAttribute: %+v\n", attribute.Value)
 			}
 		}
 	}
@@ -1155,6 +1176,15 @@ func (s *Server) handleGetAttributes(req *RequestContext, item *RequestBatchItem
 			Name:  ATTRIBUTE_NAME_LAST_CHANGE_DATE,
 			Value: result.UpdatedAt,
 		},
+	}
+
+	if result.KmipMetadata.Attributes != nil {
+		for name, attributeMetadata := range result.KmipMetadata.Attributes {
+			attributes = append(attributes, Attribute{
+				Name:  name,
+				Value: attributeMetadata.Value,
+			})
+		}
 	}
 
 	if len(request.AttributeNames) == 0 {

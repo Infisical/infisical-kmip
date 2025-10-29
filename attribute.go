@@ -5,10 +5,7 @@ package kmip
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import (
-	"strings"
 	"time"
-
-	"github.com/pkg/errors"
 )
 
 // Attribute is a Attribute Object Structure
@@ -41,13 +38,10 @@ func (a *Attribute) BuildFieldValue(name string) (v interface{}, err error) {
 		// Custom attributes can have any data type - return CustomAttribute structure
 		v = &CustomAttribute{}
 	default:
-		// Check if this is a custom attribute with x-
-		if strings.HasPrefix(a.Name, "x-") {
-			// Custom attributes can have any data type - default to string for flexibility
-			v = ""
-		} else {
-			err = errors.Errorf("unsupported attribute: %v", a.Name)
-		}
+		// For unsupported attributes (including custom x- attributes and KMIP attributes we don't explicitly handle),
+		// default to string type. The decoder will gracefully skip attributes with type mismatches
+		// (e.g., structured attributes that we don't support), allowing decoding to continue.
+		v = ""
 	}
 
 	return
@@ -104,10 +98,28 @@ type CustomAttribute struct {
 func (ca *CustomAttribute) BuildFieldValue(name string) (v interface{}, err error) {
 	switch name {
 	case "AttributeValue":
-		// Custom attributes can have any data type - default to string for flexibility
 		v = ""
-	default:
-		err = errors.Errorf("unsupported field: %v", name)
 	}
 	return
+}
+
+type ApplicationSpecificInformation struct {
+	Tag `kmip:"APPLICATION_SPECIFIC_INFORMATION"`
+
+	ApplicationNamespace string `kmip:"APPLICATION_NAMESPACE,required"`
+	ApplicationData      string `kmip:"APPLICATION_DATA,required"`
+}
+
+type Link struct {
+	Tag `kmip:"LINK"`
+
+	LinkType               Enum   `kmip:"LINK_TYPE,required"`
+	LinkedObjectIdentifier string `kmip:"LINKED_OBJECT_IDENTIFIER,required"`
+}
+
+// ContactInformation is a Contact Information Attribute Structure
+type ContactInformation struct {
+	Tag `kmip:"CONTACT_INFORMATION"`
+
+	ContactInformation string `kmip:"CONTACT_INFORMATION,required"`
 }

@@ -1167,7 +1167,7 @@ func (s *Server) handleGetAttributes(req *RequestContext, item *RequestBatchItem
 		},
 		{
 			Name:  ATTRIBUTE_NAME_OBJECT_TYPE,
-			Value: OBJECT_TYPE_SYMMETRIC_KEY,
+			Value: Enum(result.KmipMetadata.ObjectType),
 		},
 		{
 			Name:  ATTRIBUTE_NAME_CRYPTOGRAPHIC_LENGTH,

@@ -18,15 +18,21 @@ client = ProxyKmipClient(
 )
 
 client.open()
-locs = client.locate(offset_items=0, maximum_items=2, attributes=[
+locs = client.locate(offset_items=0, maximum_items=3, attributes=[
          f.create_attribute(
              enums.AttributeType.STATE,
              enums.State.ACTIVE,
          ),
         f.create_attribute(
-             enums.AttributeType.CRYPTOGRAPHIC_LENGTH,
-             256,
-         )
+             "x-Isilon-ClusterGUID",
+             "cluster-guid-12345",
+             0
+         ),
+        f.create_attribute(
+             "x-my-custom-property",
+             "some custom value",
+             1
+         ),
      ])
 
 print(locs)

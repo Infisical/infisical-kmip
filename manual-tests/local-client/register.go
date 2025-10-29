@@ -73,7 +73,7 @@ func ExecuteRegister() {
 	nameAttribute := kmip.Attribute{
 		Name: kmip.ATTRIBUTE_NAME_NAME,
 		Value: kmip.Name{
-			Value: "my-secret-key-name",
+			Value: "my-secret-key-name-z",
 			Type:  kmip.NAME_TYPE_UNINTERPRETED_TEXT_STRING,
 		},
 	}
@@ -93,9 +93,35 @@ func ExecuteRegister() {
 		},
 	}
 
+	// Application Specific Information attribute
+	appSpecificInfo := kmip.Attribute{
+		Name: kmip.ATTRIBUTE_NAME_APPLICATION_SPECIFIC_INFORMATION,
+		Value: kmip.ApplicationSpecificInformation{
+			ApplicationNamespace: "com.example.myapp",
+			ApplicationData:      "custom-application-data-value",
+		},
+	}
+
+	// Link attribute - links this secret to a certificate
+	linkAttribute := kmip.Attribute{
+		Name: kmip.ATTRIBUTE_NAME_LINK,
+		Value: kmip.Link{
+			LinkType:               kmip.LINK_TYPE_CERTIFICATE_LINK,
+			LinkedObjectIdentifier: "cert-12345-abcde", // ID of the linked certificate
+		},
+	}
+
+	// Contact Information attribute - will trigger type mismatch on decode
+	contactInfo := kmip.Attribute{
+		Name: kmip.ATTRIBUTE_NAME_CONTACT_INFORMATION,
+		Value: kmip.ContactInformation{
+			ContactInformation: "admin@example.com",
+		},
+	}
+
 	// Create template attribute with all attributes
 	templateAttribute := kmip.TemplateAttribute{
-		Attributes: []kmip.Attribute{nameAttribute, customAttribute1, customAttribute2},
+		Attributes: []kmip.Attribute{nameAttribute, customAttribute1, customAttribute2, appSpecificInfo, linkAttribute, contactInfo},
 	}
 
 	// Create register request

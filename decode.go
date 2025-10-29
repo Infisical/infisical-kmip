@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/ioutil"
 	"reflect"
+	"strings"
 
 	"github.com/pkg/errors"
 )
@@ -342,6 +343,53 @@ func (d *Decoder) decode(rv reflect.Value, structD *structDesc) (n int, err erro
 			for {
 				nn, v, err = dd.decodeValue(f, ff.Type().Elem(), rv)
 				if err != nil {
+					// For dynamic slice fields with type mismatches, skip individual items
+					if f.dynamic && !f.required && strings.Contains(err.Error(), "expecting type") {
+						// Type mismatch occurred. Tag and Type have been read already.
+						// We need to read Length and skip Value bytes to continue
+						var skipLen uint32
+						skipLen, err = dd.readLength()
+						if err != nil {
+							err = errors.Wrapf(err, "error skipping field %v after type mismatch", f.name)
+							return
+						}
+
+						// Skip the value bytes (with padding)
+						skipBytes := int64(skipLen)
+						if skipLen%8 != 0 {
+							skipBytes += int64(8 - skipLen%8)
+						}
+						_, err = io.CopyN(ioutil.Discard, dd.r, skipBytes)
+						if err != nil {
+							err = errors.Wrapf(err, "error skipping field %v value bytes", f.name)
+							return
+						}
+
+						// Account for bytes read: tag(3) + type(1) + length(4) + value+padding
+						nn = 8 + int(skipBytes)
+						n += nn
+						actualLen += uint32(nn)
+
+						// Clear error and check if we should continue
+						err = nil
+
+						if actualLen >= expectedLen {
+							break
+						}
+
+						tag, err = dd.peekTag()
+						if err != nil {
+							return
+						}
+
+						if tag != f.tag {
+							break
+						}
+
+						// Skip this item and continue to next
+						continue
+					}
+
 					err = errors.Wrapf(err, "error reading field %v", f.name)
 					return
 				}
@@ -369,6 +417,39 @@ func (d *Decoder) decode(rv reflect.Value, structD *structDesc) (n int, err erro
 		} else {
 			nn, v, err = dd.decodeValue(f, ff.Type(), rv)
 			if err != nil {
+				// For dynamic fields with type mismatches (e.g. unsupported structured attributes),
+				// skip the field and continue if not required
+				if f.dynamic && !f.required && strings.Contains(err.Error(), "expecting type") {
+					// Type mismatch occurred. Tag and Type have been read already.
+					// We need to read Length and skip Value bytes to continue
+					var skipLen uint32
+					skipLen, err = dd.readLength()
+					if err != nil {
+						err = errors.Wrapf(err, "error skipping field %v after type mismatch", f.name)
+						return
+					}
+
+					// Skip the value bytes (with padding)
+					skipBytes := int64(skipLen)
+					if skipLen%8 != 0 {
+						skipBytes += int64(8 - skipLen%8)
+					}
+					_, err = io.CopyN(ioutil.Discard, dd.r, skipBytes)
+					if err != nil {
+						err = errors.Wrapf(err, "error skipping field %v value bytes", f.name)
+						return
+					}
+
+					// Account for bytes read: tag(3) + type(1) + length(4) + value+padding
+					nn = 8 + int(skipBytes)
+					n += nn
+					actualLen += uint32(nn)
+
+					// Clear error and continue to next field
+					err = nil
+					continue
+				}
+
 				err = errors.Wrapf(err, "error reading field %v", f.name)
 				return
 			}

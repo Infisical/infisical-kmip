@@ -482,6 +482,7 @@ func (s *Server) handleLocate(req *RequestContext, item *RequestBatchItem) (resp
 		ATTRIBUTE_NAME_NAME,
 		ATTRIBUTE_NAME_OBJECT_TYPE,
 		ATTRIBUTE_NAME_CRYPTOGRAPHIC_USAGE_MASK,
+		ATTRIBUTE_NAME_CUSTOM_ATTRIBUTE,
 	}
 
 	unsupportedAttributes := []string{}
@@ -509,12 +510,6 @@ func (s *Server) handleLocate(req *RequestContext, item *RequestBatchItem) (resp
 
 		shouldMatch := true
 		for _, attribute := range request.Attributes {
-			if !ContainsString(supportedAttributes, attribute.Name) {
-				if !ContainsString(unsupportedAttributes, attribute.Name) {
-					unsupportedAttributes = append(unsupportedAttributes, attribute.Name)
-				}
-			}
-
 			if attribute.Name == ATTRIBUTE_NAME_OBJECT_TYPE {
 				if attribute.Value != OBJECT_TYPE_SYMMETRIC_KEY {
 					shouldMatch = false
@@ -566,6 +561,28 @@ func (s *Server) handleLocate(req *RequestContext, item *RequestBatchItem) (resp
 			if attribute.Name == ATTRIBUTE_NAME_CRYPTOGRAPHIC_USAGE_MASK {
 				// intentionally left blank as we do not have cryptographic usage mask yet!
 				continue
+			}
+
+			if strings.Contains(attribute.Name, "x-") {
+				if attribute.Value != object.KmipMetadata.Attributes[attribute.Name].Value {
+					shouldMatch = false
+					break
+				}
+			}
+
+			if attribute.Name == ATTRIBUTE_NAME_CUSTOM_ATTRIBUTE {
+				if customAttribute, ok := attribute.Value.(CustomAttribute); ok {
+					if customAttribute.AttributeValue != object.KmipMetadata.Attributes[customAttribute.AttributeName].Value {
+						shouldMatch = false
+						break
+					}
+				}
+			}
+
+			if !ContainsString(supportedAttributes, attribute.Name) {
+				if !ContainsString(unsupportedAttributes, attribute.Name) && !strings.Contains(attribute.Name, "x-") {
+					unsupportedAttributes = append(unsupportedAttributes, attribute.Name)
+				}
 			}
 		}
 

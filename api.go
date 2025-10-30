@@ -75,10 +75,11 @@ type AttributeMetadata struct {
 }
 
 type KmipMetadata struct {
-	SecretDataType       int                        `json:"secretDataType"`
-	SecretDataFormatType int                        `json:"secretDataFormatType"`
-	ObjectType           int                        `json:"objectType"`
+	SecretDataType       int                          `json:"secretDataType"`
+	SecretDataFormatType int                          `json:"secretDataFormatType"`
+	ObjectType           int                          `json:"objectType"`
 	Attributes           map[string]AttributeMetadata `json:"attributes"`
+	IsHexEncoded         bool                         `json:"isHexEncoded,omitempty"`
 }
 
 type KmipRegisterAPIRequest struct {

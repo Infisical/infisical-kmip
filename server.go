@@ -675,15 +675,6 @@ func (s *Server) handleRegister(req *RequestContext, item *RequestBatchItem) (re
 			return nil, wrapError(errors.New("secret data is empty"), RESULT_REASON_INVALID_FIELD)
 		}
 
-		dataLength := len(keyData) * 8 // Convert bytes to bits
-		if dataLength == 128 {
-			algorithm = "aes-128-gcm"
-		} else if dataLength == 256 {
-			algorithm = "aes-256-gcm"
-		} else {
-			algorithm = "aes-256-gcm"
-		}
-
 		if request.SecretData.KeyBlock.WrappingData.WrappingMethod != 0 {
 			return nil, wrapError(errors.New("unsupported wrapping method for secret data"), RESULT_REASON_INVALID_FIELD)
 		}
@@ -707,6 +698,23 @@ func (s *Server) handleRegister(req *RequestContext, item *RequestBatchItem) (re
 		return nil, wrapError(errors.New("unsupported object type"), RESULT_REASON_INVALID_FIELD)
 	}
 
+	// Check if keyData is hex-encoded and decode it if necessary since we only want to send binary data to the API
+	keyData, wasHexEncoded, err := decodeHexIfEncoded(keyData)
+	if err != nil {
+		return nil, wrapError(errors.Wrap(err, "failed to decode hex-encoded key data"), RESULT_REASON_INVALID_FIELD)
+	}
+
+	if request.ObjectType == OBJECT_TYPE_SECRET_DATA {
+		dataLength := len(keyData) * 8 // Convert bytes to bits
+		if dataLength == 128 {
+			algorithm = "aes-128-gcm"
+		} else if dataLength == 256 {
+			algorithm = "aes-256-gcm"
+		} else {
+			algorithm = "aes-256-gcm"
+		}
+	}
+
 	// Extract KMIP metadata for SecretData
 	var kmipMetadata = KmipMetadata{
 		Attributes: make(map[string]AttributeMetadata),
@@ -718,6 +726,7 @@ func (s *Server) handleRegister(req *RequestContext, item *RequestBatchItem) (re
 	}
 
 	kmipMetadata.ObjectType = int(request.ObjectType)
+	kmipMetadata.IsHexEncoded = wasHexEncoded
 
 	payload = KmipRegisterAPIRequest{
 		Key:          base64.StdEncoding.EncodeToString(keyData),
@@ -881,8 +890,6 @@ func (s *Server) handleRevoke(req *RequestContext, item *RequestBatchItem) (resp
 	return response, nil
 }
 
-/* We currently only support getting symmetric keys */
-// TODO: add support for key wrapping
 func (s *Server) handleGet(req *RequestContext, item *RequestBatchItem) (resp interface{}, err error) {
 	response := GetResponse{}
 
@@ -947,17 +954,23 @@ func (s *Server) handleGet(req *RequestContext, item *RequestBatchItem) (resp in
 		return nil, errors.Wrap(err, "failed to decode base64 value")
 	}
 
+	// If the key was originally registered as hex-encoded, convert it back to hex for the response
+	keyMaterial := decodedValue
+	if result.KmipMetadata.IsHexEncoded {
+		keyMaterial = encodeToHex(decodedValue)
+	}
+
 	// Use stored metadata from API response
 	if result.KmipMetadata.SecretDataType != 0 {
 		// This is a SecretData object
 		response.ObjectType = OBJECT_TYPE_SECRET_DATA
-		response.SecretData.KeyBlock.Value.KeyMaterial = []byte(decodedValue)
+		response.SecretData.KeyBlock.Value.KeyMaterial = keyMaterial
 		response.SecretData.KeyBlock.FormatType = Enum(result.KmipMetadata.SecretDataFormatType)
 		response.SecretData.SecretDataType = Enum(result.KmipMetadata.SecretDataType)
 	} else {
 		// This is a SymmetricKey object (default behavior)
 		response.ObjectType = OBJECT_TYPE_SYMMETRIC_KEY
-		response.SymmetricKey.KeyBlock.Value.KeyMaterial = []byte(decodedValue)
+		response.SymmetricKey.KeyBlock.Value.KeyMaterial = keyMaterial
 		response.SymmetricKey.KeyBlock.FormatType = KEY_FORMAT_RAW
 
 		// Set cryptographic parameters for SymmetricKey objects
@@ -1024,7 +1037,13 @@ func (s *Server) handleGet(req *RequestContext, item *RequestBatchItem) (resp in
 			return nil, errors.Wrap(err, "failed to wrap key")
 		}
 
-		response.SymmetricKey.KeyBlock.Value.KeyMaterial = wrappedKey
+		// If the key was originally hex-encoded, hex-encode the wrapped key too
+		wrappedKeyMaterial := wrappedKey
+		if result.KmipMetadata.IsHexEncoded {
+			wrappedKeyMaterial = encodeToHex(wrappedKey)
+		}
+
+		response.SymmetricKey.KeyBlock.Value.KeyMaterial = wrappedKeyMaterial
 		response.SymmetricKey.KeyBlock.WrappingData = KeyWrappingData{
 			WrappingMethod: WRAPPING_METHOD_ENCRYPT,
 			EncryptionKeyInformation: EncryptionKeyInformation{

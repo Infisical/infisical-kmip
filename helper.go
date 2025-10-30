@@ -1,6 +1,7 @@
 package kmip
 
 import (
+	"encoding/hex"
 	"fmt"
 	"net"
 	"regexp"
@@ -84,4 +85,39 @@ func ValidateHostnamesOrIPs(input string) error {
 	}
 
 	return nil
+}
+
+// isHexEncoded checks if the given byte slice appears to be hex-encoded
+// It returns true if all characters are valid hex characters (0-9, a-f, A-F)
+func isHexEncoded(data []byte) bool {
+	if len(data) == 0 || len(data)%2 != 0 {
+		return false
+	}
+
+	for _, b := range data {
+		if !((b >= '0' && b <= '9') || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F')) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// decodeHexIfEncoded checks if data is hex-encoded and decodes it if so
+// Returns the decoded data (or original if not hex), and a boolean indicating if it was hex-encoded
+func decodeHexIfEncoded(data []byte) ([]byte, bool, error) {
+	if isHexEncoded(data) {
+		decoded, err := hex.DecodeString(string(data))
+		if err != nil {
+			// If decoding fails, treat it as not hex-encoded
+			return data, false, nil
+		}
+		return decoded, true, nil
+	}
+	return data, false, nil
+}
+
+// encodeToHex converts binary data to hex-encoded string bytes
+func encodeToHex(data []byte) []byte {
+	return []byte(hex.EncodeToString(data))
 }

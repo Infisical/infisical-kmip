@@ -85,7 +85,10 @@ func (s *Server) getAccessToken() string {
 	if s.AccessToken != "" {
 		return s.AccessToken
 	}
-	return s.InfisicalAuth.GetAccessToken()
+	if s.InfisicalAuth != nil {
+		return s.InfisicalAuth.GetAccessToken()
+	}
+	return ""
 }
 
 // Handler processes specific KMIP operation

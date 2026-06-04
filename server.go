@@ -63,6 +63,11 @@ type Server struct {
 
 	InfisicalAuth infisical.AuthInterface
 
+	// AccessToken, when set, is used as the bearer token for all Infisical API calls
+	// instead of InfisicalAuth. This is the enrollment-based path (token/AWS), where the
+	// caller has already obtained a KMIP server access token. Takes precedence over InfisicalAuth.
+	AccessToken string
+
 	l        net.Listener
 	mu       sync.Mutex
 	wg       sync.WaitGroup
@@ -72,6 +77,18 @@ type Server struct {
 	ServerName     string
 	CertificateTTL string
 	HostnamesOrIps string
+}
+
+// getAccessToken returns the bearer token used for Infisical API calls. The enrollment-based
+// AccessToken takes precedence; otherwise it falls back to the legacy machine-identity auth.
+func (s *Server) getAccessToken() string {
+	if s.AccessToken != "" {
+		return s.AccessToken
+	}
+	if s.InfisicalAuth != nil {
+		return s.InfisicalAuth.GetAccessToken()
+	}
+	return ""
 }
 
 // Handler processes specific KMIP operation
@@ -457,7 +474,7 @@ func (s *Server) handleLocate(req *RequestContext, item *RequestBatchItem) (resp
 		SetHeader("X-Kmip-Client-Certificate-Serial-Number", req.SessionAuth.ClientCertificateSerialNumber).
 		SetHeader("X-Kmip-Project-Id", req.SessionAuth.ProjectId).
 		SetHeader("X-Kmip-Client-Id", req.SessionAuth.ClientId).
-		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.InfisicalAuth.GetAccessToken())).
+		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.getAccessToken())).
 		Post(fmt.Sprintf("%s/v1/kmip/spec/locate", s.InfisicalBaseAPIURL))
 
 	if err != nil {
@@ -768,7 +785,7 @@ func (s *Server) handleRegister(req *RequestContext, item *RequestBatchItem) (re
 		SetHeader("X-Kmip-Client-Certificate-Serial-Number", req.SessionAuth.ClientCertificateSerialNumber).
 		SetHeader("X-Kmip-Project-Id", req.SessionAuth.ProjectId).
 		SetHeader("X-Kmip-Client-Id", req.SessionAuth.ClientId).
-		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.InfisicalAuth.GetAccessToken())).
+		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.getAccessToken())).
 		SetBody(payload).
 		Post(fmt.Sprintf("%s/v1/kmip/spec/register", s.InfisicalBaseAPIURL))
 
@@ -816,7 +833,7 @@ func (s *Server) handleActivate(req *RequestContext, item *RequestBatchItem) (re
 		SetHeader("X-Kmip-Client-Certificate-Serial-Number", req.SessionAuth.ClientCertificateSerialNumber).
 		SetHeader("X-Kmip-Project-Id", req.SessionAuth.ProjectId).
 		SetHeader("X-Kmip-Client-Id", req.SessionAuth.ClientId).
-		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.InfisicalAuth.GetAccessToken())).
+		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.getAccessToken())).
 		SetBody(payload).
 		Post(fmt.Sprintf("%s/v1/kmip/spec/activate", s.InfisicalBaseAPIURL))
 
@@ -867,7 +884,7 @@ func (s *Server) handleRevoke(req *RequestContext, item *RequestBatchItem) (resp
 		SetHeader("X-Kmip-Client-Certificate-Serial-Number", req.SessionAuth.ClientCertificateSerialNumber).
 		SetHeader("X-Kmip-Project-Id", req.SessionAuth.ProjectId).
 		SetHeader("X-Kmip-Client-Id", req.SessionAuth.ClientId).
-		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.InfisicalAuth.GetAccessToken())).
+		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.getAccessToken())).
 		SetBody(payload).
 		Post(fmt.Sprintf("%s/v1/kmip/spec/revoke", s.InfisicalBaseAPIURL))
 
@@ -928,7 +945,7 @@ func (s *Server) handleGet(req *RequestContext, item *RequestBatchItem) (resp in
 		SetHeader("X-Kmip-Client-Certificate-Serial-Number", req.SessionAuth.ClientCertificateSerialNumber).
 		SetHeader("X-Kmip-Project-Id", req.SessionAuth.ProjectId).
 		SetHeader("X-Kmip-Client-Id", req.SessionAuth.ClientId).
-		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.InfisicalAuth.GetAccessToken())).
+		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.getAccessToken())).
 		SetHeader("Content-Type", "application/json").
 		SetBody(payload).
 		Post(fmt.Sprintf("%s/v1/kmip/spec/get", s.InfisicalBaseAPIURL))
@@ -1008,7 +1025,7 @@ func (s *Server) handleGet(req *RequestContext, item *RequestBatchItem) (resp in
 			SetHeader("X-Kmip-Client-Certificate-Serial-Number", req.SessionAuth.ClientCertificateSerialNumber).
 			SetHeader("X-Kmip-Project-Id", req.SessionAuth.ProjectId).
 			SetHeader("X-Kmip-Client-Id", req.SessionAuth.ClientId).
-			SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.InfisicalAuth.GetAccessToken())).
+			SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.getAccessToken())).
 			SetHeader("Content-Type", "application/json").
 			SetBody(payload).
 			Post(fmt.Sprintf("%s/v1/kmip/spec/get", s.InfisicalBaseAPIURL))
@@ -1082,7 +1099,7 @@ func (s *Server) handleDestroy(req *RequestContext, item *RequestBatchItem) (res
 		SetHeader("X-Kmip-Client-Certificate-Serial-Number", req.SessionAuth.ClientCertificateSerialNumber).
 		SetHeader("X-Kmip-Project-Id", req.SessionAuth.ProjectId).
 		SetHeader("X-Kmip-Client-Id", req.SessionAuth.ClientId).
-		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.InfisicalAuth.GetAccessToken())).
+		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.getAccessToken())).
 		SetHeader("Content-Type", "application/json").
 		SetBody(payload).
 		Post(fmt.Sprintf("%s/v1/kmip/spec/destroy", s.InfisicalBaseAPIURL))
@@ -1137,7 +1154,7 @@ func (s *Server) handleGetAttributes(req *RequestContext, item *RequestBatchItem
 		SetHeader("X-Kmip-Client-Certificate-Serial-Number", req.SessionAuth.ClientCertificateSerialNumber).
 		SetHeader("X-Kmip-Project-Id", req.SessionAuth.ProjectId).
 		SetHeader("X-Kmip-Client-Id", req.SessionAuth.ClientId).
-		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.InfisicalAuth.GetAccessToken())).
+		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.getAccessToken())).
 		SetHeader("Content-Type", "application/json").
 		SetBody(payload).
 		Post(fmt.Sprintf("%s/v1/kmip/spec/get-attributes", s.InfisicalBaseAPIURL))
@@ -1353,7 +1370,7 @@ func (s *Server) handleCreate(req *RequestContext, item *RequestBatchItem) (resp
 		SetHeader("X-Kmip-Client-Certificate-Serial-Number", req.SessionAuth.ClientCertificateSerialNumber).
 		SetHeader("X-Kmip-Project-Id", req.SessionAuth.ProjectId).
 		SetHeader("X-Kmip-Client-Id", req.SessionAuth.ClientId).
-		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.InfisicalAuth.GetAccessToken())).
+		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.getAccessToken())).
 		SetHeader("Content-Type", "application/json").
 		SetBody(payload).
 		Post(fmt.Sprintf("%s/v1/kmip/spec/create", s.InfisicalBaseAPIURL))

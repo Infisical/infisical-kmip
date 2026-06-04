@@ -46,7 +46,7 @@ func (s *KmipServer) loadCertificates() error {
 	}
 
 	apiResp, err := client.R().
-		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.server.InfisicalAuth.GetAccessToken())).
+		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.server.getAccessToken())).
 		SetHeader("Content-Type", "application/json").
 		SetBody(payload).
 		Post(fmt.Sprintf("%s/v1/kmip/server-registration", s.server.InfisicalBaseAPIURL))
@@ -130,6 +130,10 @@ type ServerConfig struct {
 	IdentityClientId     string
 	IdentityClientSecret string
 
+	// AccessToken is an enrollment-based KMIP server access token. When set, it is used
+	// directly for Infisical API calls and the machine-identity login is skipped.
+	AccessToken string
+
 	ServerName     string
 	CertificateTTL string
 	HostnamesOrIps string
@@ -156,20 +160,26 @@ func StartServer(config ServerConfig) {
 
 	kmip.server.Log = log.New(os.Stderr, "[kmip] ", log.LstdFlags)
 
-	infisicalClient := infisical.NewInfisicalClient(context.Background(), infisical.Config{
-		SiteUrl:          strings.TrimSuffix(kmip.server.InfisicalBaseAPIURL, "/api"),
-		AutoTokenRefresh: true,
-	})
+	if config.AccessToken != "" {
+		// Enrollment-based path: the caller (CLI) already obtained a KMIP server access
+		// token via token/AWS enrollment. Use it directly, no machine-identity login.
+		kmip.server.AccessToken = config.AccessToken
+	} else {
+		// Legacy machine-identity path.
+		infisicalClient := infisical.NewInfisicalClient(context.Background(), infisical.Config{
+			SiteUrl:          strings.TrimSuffix(kmip.server.InfisicalBaseAPIURL, "/api"),
+			AutoTokenRefresh: true,
+		})
 
-	kmip.server.InfisicalAuth = infisicalClient.Auth()
-	machineIdentityClientId := config.IdentityClientId
-	machineIdentityClientSecret := config.IdentityClientSecret
+		kmip.server.InfisicalAuth = infisicalClient.Auth()
+		machineIdentityClientId := config.IdentityClientId
+		machineIdentityClientSecret := config.IdentityClientSecret
 
-	// TODO: add support for other auth methods
-	_, err = kmip.server.InfisicalAuth.UniversalAuthLogin(machineIdentityClientId, machineIdentityClientSecret)
-	if err != nil {
-		log.Fatalf("error authenticating with Infisical. %v", err)
-		return
+		_, err = kmip.server.InfisicalAuth.UniversalAuthLogin(machineIdentityClientId, machineIdentityClientSecret)
+		if err != nil {
+			log.Fatalf("error authenticating with Infisical. %v", err)
+			return
+		}
 	}
 
 	err = kmip.loadCertificates()

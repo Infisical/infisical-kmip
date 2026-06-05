@@ -39,25 +39,39 @@ type KmipServer struct {
 func (s *KmipServer) loadCertificates() error {
 	client := resty.New()
 
-	payload := KmipServerRegistrationAPIRequest{
-		HostnamesOrIps: s.server.HostnamesOrIps,
-		CommonName:     s.server.ServerName,
-		TTL:            s.server.CertificateTTL,
-	}
+	req := client.R().
+		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.server.getAccessToken()))
 
-	apiResp, err := client.R().
-		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.server.getAccessToken())).
-		SetHeader("Content-Type", "application/json").
-		SetBody(payload).
-		Post(fmt.Sprintf("%s/v1/kmip/server-registration", s.server.InfisicalBaseAPIURL))
+	var apiResp *resty.Response
+	var err error
+	var op string
+
+	if s.server.AccessToken != "" {
+		// Enrollment-based server: the cert config (SANs, TTL, common name, key algorithm) lives
+		// on the server entity, so /connect takes no body — the access token identifies the server.
+		// We deliberately don't set a JSON Content-Type: with no body the API rejects it.
+		op = "ServerConnect"
+		apiResp, err = req.Post(fmt.Sprintf("%s/v1/kmip/servers/connect", s.server.InfisicalBaseAPIURL))
+	} else {
+		// Legacy machine-identity server: supply the cert config in the request body.
+		op = "ServerRegistration"
+		apiResp, err = req.
+			SetHeader("Content-Type", "application/json").
+			SetBody(KmipServerRegistrationAPIRequest{
+				HostnamesOrIps: s.server.HostnamesOrIps,
+				CommonName:     s.server.ServerName,
+				TTL:            s.server.CertificateTTL,
+			}).
+			Post(fmt.Sprintf("%s/v1/kmip/server-registration", s.server.InfisicalBaseAPIURL))
+	}
 
 	if err != nil {
 		s.server.Log.Printf("Error: %+v\n", err)
-		return infisicalErrors.NewRequestError("ServerRegistration", err)
+		return infisicalErrors.NewRequestError(op, err)
 	}
 
 	if apiResp.IsError() {
-		return infisicalErrors.NewAPIErrorWithResponse("ServerRegistration", apiResp)
+		return infisicalErrors.NewAPIErrorWithResponse(op, apiResp)
 	}
 
 	var result KmipServerRegistrationAPIResponse
@@ -142,14 +156,18 @@ type ServerConfig struct {
 func StartServer(config ServerConfig) {
 	kmip := &KmipServer{}
 
-	err := ValidateHostnamesOrIPs(config.HostnamesOrIps)
-	if err != nil {
-		log.Fatalf("Validation for field HostnamesOrIps failed. %v", err)
-	}
+	var err error
 
-	err = ValidateDuration(config.CertificateTTL)
-	if err != nil {
-		log.Fatalf("Validation for field CertificateTTL failed. %v", err)
+	// Enrollment-based servers (AccessToken set) read their cert config from the platform at
+	// /connect, so hostnames/IPs and TTL aren't supplied here — only the legacy machine-identity
+	// path passes and validates them.
+	if config.AccessToken == "" {
+		if err = ValidateHostnamesOrIPs(config.HostnamesOrIps); err != nil {
+			log.Fatalf("Validation for field HostnamesOrIps failed. %v", err)
+		}
+		if err = ValidateDuration(config.CertificateTTL); err != nil {
+			log.Fatalf("Validation for field CertificateTTL failed. %v", err)
+		}
 	}
 
 	kmip.server.Addr = config.Addr

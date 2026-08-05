@@ -2,6 +2,7 @@ package kmip
 
 import (
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/rsa"
 	"crypto/tls"
@@ -118,8 +119,12 @@ func (s *KmipServer) fetchCertificates(isRenewal bool) (*certState, error) {
 		return nil, errors.Wrapf(err, "error parsing server private key")
 	}
 
-	switch key.(type) {
-	case *ecdsa.PrivateKey, *rsa.PrivateKey:
+	var signer crypto.Signer
+	switch k := key.(type) {
+	case *ecdsa.PrivateKey:
+		signer = k
+	case *rsa.PrivateKey:
+		signer = k
 	default:
 		return nil, errors.New("server private key is not of a supported type (ECDSA or RSA)")
 	}
@@ -132,6 +137,13 @@ func (s *KmipServer) fetchCertificates(isRenewal bool) (*certState, error) {
 	serverCert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
 		return nil, errors.Wrapf(err, "error parsing server cert")
+	}
+
+	// A mismatched key/cert pair would replace a working certificate with one that fails
+	// every handshake; reject it so the previous snapshot keeps being served.
+	pub, ok := serverCert.PublicKey.(interface{ Equal(crypto.PublicKey) bool })
+	if !ok || !pub.Equal(signer.Public()) {
+		return nil, errors.New("server private key does not match the server certificate")
 	}
 
 	clientCAPool := x509.NewCertPool()

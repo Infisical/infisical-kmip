@@ -6,7 +6,6 @@ package kmip
 
 import (
 	"context"
-	"crypto"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
@@ -18,6 +17,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -58,15 +58,22 @@ type Server struct {
 	// any other kind of auth (say, by soure address)
 	SessionAuthHandler func(conn net.Conn) (sessionAuth SessionAuth, err error)
 
-	CertificatePrivateKey   crypto.PrivateKey
-	CertificateSerialNumber string
-
 	InfisicalAuth infisical.AuthInterface
 
 	// AccessToken, when set, is used as the bearer token for all Infisical API calls
 	// instead of InfisicalAuth. This is the enrollment-based path (token/AWS), where the
 	// caller has already obtained a KMIP server access token. Takes precedence over InfisicalAuth.
 	AccessToken string
+
+	// RefreshAccessToken, when set, is called by the certificate renewal loop when the
+	// access token is rejected, to obtain a fresh one (e.g. by re-running AWS auth).
+	RefreshAccessToken func() (string, error)
+
+	// certState holds the current certificate material; swapped atomically on renewal.
+	certState atomic.Pointer[certState]
+
+	// tokenMu guards AccessToken: handlers read it concurrently while the renewal loop may replace it.
+	tokenMu sync.RWMutex
 
 	l        net.Listener
 	mu       sync.Mutex
@@ -82,11 +89,37 @@ type Server struct {
 // getAccessToken returns the bearer token used for Infisical API calls. The enrollment-based
 // AccessToken takes precedence; otherwise it falls back to the legacy machine-identity auth.
 func (s *Server) getAccessToken() string {
-	if s.AccessToken != "" {
-		return s.AccessToken
+	s.tokenMu.RLock()
+	token := s.AccessToken
+	s.tokenMu.RUnlock()
+
+	if token != "" {
+		return token
 	}
 	if s.InfisicalAuth != nil {
 		return s.InfisicalAuth.GetAccessToken()
+	}
+	return ""
+}
+
+func (s *Server) setAccessToken(token string) {
+	s.tokenMu.Lock()
+	s.AccessToken = token
+	s.tokenMu.Unlock()
+}
+
+// isEnrollmentBased reports whether this server authenticates with an enrollment access
+// token (as opposed to the legacy machine-identity path).
+func (s *Server) isEnrollmentBased() bool {
+	s.tokenMu.RLock()
+	defer s.tokenMu.RUnlock()
+	return s.AccessToken != ""
+}
+
+// getCertificateSerialNumber returns the serial number of the currently served certificate.
+func (s *Server) getCertificateSerialNumber() string {
+	if state := s.certState.Load(); state != nil {
+		return state.serialNumber
 	}
 	return ""
 }
@@ -470,7 +503,7 @@ func (s *Server) handleLocate(req *RequestContext, item *RequestBatchItem) (resp
 	client := resty.New()
 
 	apiResp, err := client.R().
-		SetHeader("X-Kmip-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+		SetHeader("X-Kmip-Server-Certificate-Serial-Number", s.getCertificateSerialNumber()).
 		SetHeader("X-Kmip-Client-Certificate-Serial-Number", req.SessionAuth.ClientCertificateSerialNumber).
 		SetHeader("X-Kmip-Project-Id", req.SessionAuth.ProjectId).
 		SetHeader("X-Kmip-Client-Id", req.SessionAuth.ClientId).
@@ -781,7 +814,7 @@ func (s *Server) handleRegister(req *RequestContext, item *RequestBatchItem) (re
 	client := resty.New()
 
 	apiResp, err := client.R().
-		SetHeader("X-Kmip-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+		SetHeader("X-Kmip-Server-Certificate-Serial-Number", s.getCertificateSerialNumber()).
 		SetHeader("X-Kmip-Client-Certificate-Serial-Number", req.SessionAuth.ClientCertificateSerialNumber).
 		SetHeader("X-Kmip-Project-Id", req.SessionAuth.ProjectId).
 		SetHeader("X-Kmip-Client-Id", req.SessionAuth.ClientId).
@@ -829,7 +862,7 @@ func (s *Server) handleActivate(req *RequestContext, item *RequestBatchItem) (re
 	client := resty.New()
 
 	apiResp, err := client.R().
-		SetHeader("X-Kmip-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+		SetHeader("X-Kmip-Server-Certificate-Serial-Number", s.getCertificateSerialNumber()).
 		SetHeader("X-Kmip-Client-Certificate-Serial-Number", req.SessionAuth.ClientCertificateSerialNumber).
 		SetHeader("X-Kmip-Project-Id", req.SessionAuth.ProjectId).
 		SetHeader("X-Kmip-Client-Id", req.SessionAuth.ClientId).
@@ -880,7 +913,7 @@ func (s *Server) handleRevoke(req *RequestContext, item *RequestBatchItem) (resp
 	client := resty.New()
 
 	apiResp, err := client.R().
-		SetHeader("X-Kmip-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+		SetHeader("X-Kmip-Server-Certificate-Serial-Number", s.getCertificateSerialNumber()).
 		SetHeader("X-Kmip-Client-Certificate-Serial-Number", req.SessionAuth.ClientCertificateSerialNumber).
 		SetHeader("X-Kmip-Project-Id", req.SessionAuth.ProjectId).
 		SetHeader("X-Kmip-Client-Id", req.SessionAuth.ClientId).
@@ -941,7 +974,7 @@ func (s *Server) handleGet(req *RequestContext, item *RequestBatchItem) (resp in
 	client := resty.New()
 
 	apiResp, err := client.R().
-		SetHeader("X-Kmip-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+		SetHeader("X-Kmip-Server-Certificate-Serial-Number", s.getCertificateSerialNumber()).
 		SetHeader("X-Kmip-Client-Certificate-Serial-Number", req.SessionAuth.ClientCertificateSerialNumber).
 		SetHeader("X-Kmip-Project-Id", req.SessionAuth.ProjectId).
 		SetHeader("X-Kmip-Client-Id", req.SessionAuth.ClientId).
@@ -1021,7 +1054,7 @@ func (s *Server) handleGet(req *RequestContext, item *RequestBatchItem) (resp in
 		client := resty.New()
 
 		keyWrapperApiResp, err := client.R().
-			SetHeader("X-Kmip-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+			SetHeader("X-Kmip-Server-Certificate-Serial-Number", s.getCertificateSerialNumber()).
 			SetHeader("X-Kmip-Client-Certificate-Serial-Number", req.SessionAuth.ClientCertificateSerialNumber).
 			SetHeader("X-Kmip-Project-Id", req.SessionAuth.ProjectId).
 			SetHeader("X-Kmip-Client-Id", req.SessionAuth.ClientId).
@@ -1095,7 +1128,7 @@ func (s *Server) handleDestroy(req *RequestContext, item *RequestBatchItem) (res
 	client := resty.New()
 
 	apiResp, err := client.R().
-		SetHeader("X-Kmip-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+		SetHeader("X-Kmip-Server-Certificate-Serial-Number", s.getCertificateSerialNumber()).
 		SetHeader("X-Kmip-Client-Certificate-Serial-Number", req.SessionAuth.ClientCertificateSerialNumber).
 		SetHeader("X-Kmip-Project-Id", req.SessionAuth.ProjectId).
 		SetHeader("X-Kmip-Client-Id", req.SessionAuth.ClientId).
@@ -1150,7 +1183,7 @@ func (s *Server) handleGetAttributes(req *RequestContext, item *RequestBatchItem
 	client := resty.New()
 
 	apiResp, err := client.R().
-		SetHeader("X-Kmip-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+		SetHeader("X-Kmip-Server-Certificate-Serial-Number", s.getCertificateSerialNumber()).
 		SetHeader("X-Kmip-Client-Certificate-Serial-Number", req.SessionAuth.ClientCertificateSerialNumber).
 		SetHeader("X-Kmip-Project-Id", req.SessionAuth.ProjectId).
 		SetHeader("X-Kmip-Client-Id", req.SessionAuth.ClientId).
@@ -1366,7 +1399,7 @@ func (s *Server) handleCreate(req *RequestContext, item *RequestBatchItem) (resp
 	client := resty.New()
 
 	apiResp, err := client.R().
-		SetHeader("X-Kmip-Server-Certificate-Serial-Number", s.CertificateSerialNumber).
+		SetHeader("X-Kmip-Server-Certificate-Serial-Number", s.getCertificateSerialNumber()).
 		SetHeader("X-Kmip-Client-Certificate-Serial-Number", req.SessionAuth.ClientCertificateSerialNumber).
 		SetHeader("X-Kmip-Project-Id", req.SessionAuth.ProjectId).
 		SetHeader("X-Kmip-Client-Id", req.SessionAuth.ClientId).

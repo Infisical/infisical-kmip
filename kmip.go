@@ -58,7 +58,7 @@ type KmipServer struct {
 	listenCh chan error
 }
 
-func (s *KmipServer) fetchCertificates(isRenewal bool) (*certState, error) {
+func (s *KmipServer) fetchCertificates() (*certState, error) {
 	client := resty.New()
 
 	req := client.R().
@@ -73,11 +73,7 @@ func (s *KmipServer) fetchCertificates(isRenewal bool) (*certState, error) {
 		// on the server entity, so /connect takes no body, the access token identifies the server.
 		// We deliberately don't set a JSON Content-Type: with no body the API rejects it.
 		op = "ServerConnect"
-		connectURL := fmt.Sprintf("%s/v1/kmip/servers/connect", s.server.InfisicalBaseAPIURL)
-		if isRenewal {
-			connectURL += "?isRenewal=true"
-		}
-		apiResp, err = req.Post(connectURL)
+		apiResp, err = req.Post(fmt.Sprintf("%s/v1/kmip/servers/connect", s.server.InfisicalBaseAPIURL))
 	} else {
 		// Legacy machine-identity server: supply the cert config in the request body.
 		op = "ServerRegistration"
@@ -198,8 +194,8 @@ func (s *KmipServer) fetchCertificates(isRenewal bool) (*certState, error) {
 	}, nil
 }
 
-func (s *KmipServer) loadCertificates(isRenewal bool) error {
-	state, err := s.fetchCertificates(isRenewal)
+func (s *KmipServer) loadCertificates() error {
+	state, err := s.fetchCertificates()
 	if err != nil {
 		return err
 	}
@@ -258,7 +254,7 @@ func (s *KmipServer) renewCertificates(done chan struct{}, oldState *certState) 
 	backoff := renewRetryInitialBackoff
 
 	for {
-		err := s.loadCertificates(true)
+		err := s.loadCertificates()
 		if err == nil {
 			newState := s.server.certState.Load()
 			s.server.Log.Printf("[INFO] Server certificate renewed (serial %s, expires %s)",
@@ -287,7 +283,7 @@ func (s *KmipServer) renewCertificates(done chan struct{}, oldState *certState) 
 
 		if retriedWithFreshToken {
 			// One immediate retry with the fresh token; if that also fails we fall back to backoff.
-			if err := s.loadCertificates(true); err == nil {
+			if err := s.loadCertificates(); err == nil {
 				newState := s.server.certState.Load()
 				s.server.Log.Printf("[INFO] Server certificate renewed (serial %s, expires %s)",
 					newState.serialNumber, newState.serverCert.NotAfter.Format(time.RFC3339))
@@ -399,7 +395,7 @@ func StartServer(config ServerConfig) {
 		}
 	}
 
-	err = kmip.loadCertificates(false)
+	err = kmip.loadCertificates()
 	if err != nil {
 		log.Fatalf("error loading certificates from Infisical. %v", err)
 		return

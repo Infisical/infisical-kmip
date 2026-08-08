@@ -32,10 +32,19 @@ const (
 
 	renewRetryInitialBackoff = 30 * time.Second
 	renewRetryMaxBackoff     = 15 * time.Minute
+
+	// minRenewInterval floors the wait between renewals so a certificate whose renewal
+	// point is already in the past (tiny TTL, clock skew) cannot trigger a tight loop
+	// of back-to-back issuance requests.
+	minRenewInterval = time.Minute
+
+	// fetchTimeout bounds the certificate fetch; without it a hung API call would stall
+	// the renewal loop indefinitely while the served certificate quietly expires.
+	fetchTimeout = 60 * time.Second
 )
 
 // certState is an immutable snapshot of the server's certificate material. It is swapped
-// atomically on renewal so in-flight connections
+// atomically on renewal so in-flight connections and handlers never see a partial update.
 type certState struct {
 	tlsCert      tls.Certificate
 	serverCert   *x509.Certificate
@@ -59,7 +68,7 @@ type KmipServer struct {
 }
 
 func (s *KmipServer) fetchCertificates() (*certState, error) {
-	client := resty.New()
+	client := resty.New().SetTimeout(fetchTimeout)
 
 	req := client.R().
 		SetHeader("Authorization", fmt.Sprintf("Bearer %s", s.server.getAccessToken()))
@@ -226,8 +235,8 @@ func (s *KmipServer) certRenewalLoop() {
 		}
 
 		wait := time.Until(renewalTime(state.serverCert))
-		if wait < 0 {
-			wait = 0
+		if wait < minRenewInterval {
+			wait = minRenewInterval
 		}
 
 		s.server.Log.Printf("[INFO] Next certificate renewal scheduled in %s (certificate expires %s)",
@@ -309,7 +318,7 @@ func (s *KmipServer) renewCertificates(done chan struct{}, oldState *certState) 
 		case remaining < 0:
 			s.server.Log.Printf("[ERROR] Certificate renewal failed and the server certificate has EXPIRED, clients cannot connect. Retrying in %s: %s", sleep.Round(time.Second), err)
 		case remaining < 24*time.Hour:
-			s.server.Log.Printf("[ERROR] Certificate renewal failed, certificate expires in %s. Retrying in %s: %s", remaining.Round(time.Minute), sleep.Round(time.Second), err)
+			s.server.Log.Printf("[ERROR] Certificate renewal failed, certificate expires in %s. Retrying in %s: %s", remaining.Round(time.Second), sleep.Round(time.Second), err)
 		default:
 			s.server.Log.Printf("[WARN] Certificate renewal failed, retrying in %s: %s", sleep.Round(time.Second), err)
 		}
